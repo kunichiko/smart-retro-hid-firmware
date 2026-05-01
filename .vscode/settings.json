@@ -1,0 +1,7 @@
+{
+    "C_Cpp.clang_format_style": "{BasedOnStyle: Google, IndentWidth: 4, ColumnLimit: 140, IndentCaseLabels: false, AllowShortFunctionsOnASingleLine: None, AlignAfterOpenBracket: Align}",
+    "files.associations": {
+        "ch32fun.h": "c",
+        "funconfig.h": "c"
+    }
+}
