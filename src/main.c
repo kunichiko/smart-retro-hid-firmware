@@ -14,6 +14,7 @@
 
 #include "ch32fun.h"
 #include "funconfig.h"
+#include "usb_midi.h"
 
 // ---------------------------------------------------------------------------
 // GPIO 初期化
@@ -22,7 +23,6 @@
 // ATARI ジョイスティック用 GPIO (出力)
 // PA0: 上, PA1: 下, PA2: 左, PA3: 右, PA4: ボタン1, PA5: ボタン2
 static void gpio_init_joystick(void) {
-    // PA0-PA5 を Push-Pull 出力に設定
     for (int i = 0; i < 6; i++) {
         GPIOA->CFGLR &= ~(0xf << (4 * i));
         GPIOA->CFGLR |= (GPIO_Speed_50MHz | GPIO_CNF_OUT_PP) << (4 * i);
@@ -34,10 +34,9 @@ static void gpio_init_joystick(void) {
 // PC0: USART1 RX (本体からの LED コマンド受信)
 // PC1: USART1 TX (キーコード送信)
 static void uart_init_x68k_keyboard(void) {
-    // USART1 クロック有効化
     RCC->APB2PCENR |= RCC_USART1EN;
 
-    // PC1 (TX): Push-Pull Alternate Function 出力
+    // PC1 (TX): Push-Pull AF 出力
     GPIOC->CFGLR &= ~(0xf << (4 * 1));
     GPIOC->CFGLR |= (GPIO_Speed_50MHz | GPIO_CNF_OUT_PP_AF) << (4 * 1);
 
@@ -45,24 +44,18 @@ static void uart_init_x68k_keyboard(void) {
     GPIOC->CFGLR &= ~(0xf << (4 * 0));
     GPIOC->CFGLR |= (GPIO_Speed_In | GPIO_CNF_IN_FLOATING) << (4 * 0);
 
-    // USART1 を PC0/PC1 にリマップ (必要に応じて)
-    // AFIO->PCFR1 で設定
-
-    // USART1 設定: 2400bps, 8N1
-    // BRR = F_CPU / baudrate = 48000000 / 2400 = 20000
-    USART1->BRR = 20000;
-    USART1->CTLR1 = USART_CTLR1_TE | USART_CTLR1_RE;  // TX, RX 有効
-    USART1->CTLR1 |= USART_CTLR1_UE;                   // USART 有効
+    // USART1: 2400bps, 8N1
+    USART1->BRR = F_CPU / 2400;
+    USART1->CTLR1 = USART_CTLR1_TE | USART_CTLR1_RE;
+    USART1->CTLR1 |= USART_CTLR1_UE;
 }
 
 // ---------------------------------------------------------------------------
 // ATARI ジョイスティック制御
 // ---------------------------------------------------------------------------
 
-// ジョイスティック状態を GPIO に反映する
 // directions: bit0=上, bit1=下, bit2=左, bit3=右
 // buttons:    bit0=ボタン1, bit1=ボタン2
-// 各ビット 1=押下, 0=解放
 static void joystick_update(uint8_t directions, uint8_t buttons) {
     for (int i = 0; i < 4; i++) {
         if (directions & (1 << i)) {
@@ -84,16 +77,12 @@ static void joystick_update(uint8_t directions, uint8_t buttons) {
 // X68000 キーボード制御
 // ---------------------------------------------------------------------------
 
-// キーコードを X68000 本体に送信する
-// keycode: bit7=0:押下/1:解放, bit6-0=キーコード
 static void x68k_keyboard_send(uint8_t keycode) {
     while (!(USART1->STATR & USART_STATR_TXE))
         ;
     USART1->DATAR = keycode;
 }
 
-// X68000 本体からの LED コマンドを受信する (ポーリング)
-// 戻り値: 受信データ (受信なしの場合は -1)
 static int x68k_keyboard_receive(void) {
     if (USART1->STATR & USART_STATR_RXNE) {
         return (uint8_t)USART1->DATAR;
@@ -102,34 +91,61 @@ static int x68k_keyboard_receive(void) {
 }
 
 // ---------------------------------------------------------------------------
-// USB-MIDI (stub)
+// USB-MIDI メッセージ処理
 // ---------------------------------------------------------------------------
 
-// TODO: USB-MIDI デバイスの初期化
-// ch32v003fun の USB ドライバ、または TinyUSB を使用して
-// USB-MIDI デバイスとして動作させる
-static void usb_midi_init(void) {
-    // USB クロック有効化
-    // RCC->APB1PCENR |= RCC_USBEN;
+// smart-retro-hid プロトコル (暫定):
+// Channel 0: ジョイスティック制御
+//   Note On/Off: note=方向/ボタン番号, velocity=状態
+//   CC 0x10: 方向ビットマップ一括 (value: bit0-3=上下左右)
+//   CC 0x11: ボタンビットマップ一括 (value: bit0-1=ボタン1-2)
+//
+// Channel 1: X68000 キーボード制御
+//   Note On:  note=キーコード → キー押下 (make)
+//   Note Off: note=キーコード → キー解放 (break)
+//
+// Channel 15: デバイス→ホスト通知
+//   CC 0x20: LED 状態変化通知
 
-    // TODO: USB デバイス初期化
-    // TODO: MIDI デスクリプタ設定
-}
+#define MIDI_CH_JOYSTICK  0
+#define MIDI_CH_KEYBOARD  1
+#define MIDI_CH_NOTIFY    15
 
-// USB-MIDI からデータを受信する (stub)
-// 戻り値: 受信したMIDIメッセージ長 (受信なしの場合は 0)
-static int usb_midi_receive(uint8_t* buf, int max_len) {
-    (void)buf;
-    (void)max_len;
-    // TODO: 実装
-    return 0;
-}
+#define CC_JOY_DIRECTION  0x10
+#define CC_JOY_BUTTONS    0x11
+#define CC_LED_STATUS     0x20
 
-// USB-MIDI にデータを送信する (stub)
-static void usb_midi_send(const uint8_t* buf, int len) {
-    (void)buf;
-    (void)len;
-    // TODO: 実装
+static void process_midi_event(uint8_t cin, uint8_t midi0, uint8_t midi1, uint8_t midi2) {
+    uint8_t channel = midi0 & 0x0F;
+
+    switch (cin) {
+    case CIN_NOTE_ON:
+        if (channel == MIDI_CH_KEYBOARD) {
+            // キー押下: midi1 = キーコード
+            x68k_keyboard_send(midi1 & 0x7F);  // bit7=0 → make
+        }
+        break;
+
+    case CIN_NOTE_OFF:
+        if (channel == MIDI_CH_KEYBOARD) {
+            // キー解放: midi1 = キーコード
+            x68k_keyboard_send(0x80 | (midi1 & 0x7F));  // bit7=1 → break
+        }
+        break;
+
+    case CIN_CONTROL_CHANGE:
+        if (channel == MIDI_CH_JOYSTICK) {
+            if (midi1 == CC_JOY_DIRECTION) {
+                joystick_update(midi2 & 0x0F, 0xFF);  // 方向のみ更新（ボタンは変更なし）
+            } else if (midi1 == CC_JOY_BUTTONS) {
+                joystick_update(0xFF, midi2 & 0x03);  // ボタンのみ更新
+            }
+        }
+        break;
+
+    default:
+        break;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -149,24 +165,22 @@ int main() {
     uart_init_x68k_keyboard();
     usb_midi_init();
 
-    // メインループ
-    uint8_t midi_buf[64];
+    uint8_t cin, midi0, midi1, midi2;
 
     while (1) {
-        // USB-MIDI からコマンド受信
-        int midi_len = usb_midi_receive(midi_buf, sizeof(midi_buf));
-        if (midi_len > 0) {
-            // TODO: プロトコルに従ってコマンドをディスパッチ
-            // - ジョイスティック制御コマンド → joystick_update()
-            // - キーボード制御コマンド → x68k_keyboard_send()
+        // USB-MIDI からコマンド受信・処理
+        while (usb_midi_receive_event(&cin, &midi0, &midi1, &midi2) > 0) {
+            process_midi_event(cin, midi0, midi1, midi2);
         }
 
         // X68000 本体からの LED コマンド受信
         int led_cmd = x68k_keyboard_receive();
         if (led_cmd >= 0) {
             // LED 状態を USB-MIDI 経由でスマホに通知
-            uint8_t notify[] = {0xF0, 0x7D, 0x01, (uint8_t)led_cmd, 0xF7};
-            usb_midi_send(notify, sizeof(notify));
+            usb_midi_control_change(MIDI_CH_NOTIFY, CC_LED_STATUS, (uint8_t)led_cmd);
         }
+
+        // USB-MIDI TX バッファをフラッシュ
+        usb_midi_poll();
     }
 }
