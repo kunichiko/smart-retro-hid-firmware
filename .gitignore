@@ -1,0 +1,23 @@
+# Build
+build/
+.pio/
+cmake-build-*/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# PlatformIO
+.pioenvs/
+.piolibdeps/
+
+# Arduino
+*.elf
+*.hex
+*.bin
+*.map
