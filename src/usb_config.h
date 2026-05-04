@@ -13,8 +13,9 @@
 #include "ch32fun.h"
 
 #define FUSB_CONFIG_EPS       3  // EP0 + EP1 + EP2
-#define USBFS_EP1_MODE        1  // OUT (host → device)
-#define USBFS_EP2_MODE       -1  // IN  (device → host)
+// fsusb の mode: 1 = TX_EN (IN, device→host), -1 = RX_EN (OUT, host→device)
+#define USBFS_EP1_MODE       -1  // EP1 OUT (host → device): MIDI 受信
+#define USBFS_EP2_MODE        1  // EP2 IN  (device → host): MIDI 送信
 #define FUSB_SUPPORTS_SLEEP   0
 #define FUSB_HID_INTERFACES   0
 #define FUSB_CURSED_TURBO_DMA 0

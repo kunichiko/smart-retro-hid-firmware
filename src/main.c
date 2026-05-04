@@ -72,6 +72,37 @@ static const char DEVICE_NAME[] = "smart-retro-hid-x68k-kb";
 #define CAP_BIDI          0x20
 
 // ---------------------------------------------------------------------------
+// デバッグ LED (PB3, PB4: Low アクティブ)
+// ---------------------------------------------------------------------------
+// Note On/Off (Channel 15) で制御
+//   note 0 → PB3, note 1 → PB4
+
+#define DEBUG_LED0_PIN  3  // PB3
+#define DEBUG_LED1_PIN  4  // PB4
+
+static void gpio_init_debug_leds(void) {
+    // PB3: Push-Pull 出力
+    GPIOB->CFGLR &= ~(0xf << (4 * DEBUG_LED0_PIN));
+    GPIOB->CFGLR |= (GPIO_Speed_50MHz | GPIO_CNF_OUT_PP) << (4 * DEBUG_LED0_PIN);
+    GPIOB->BSHR = (1 << DEBUG_LED0_PIN);  // High = 消灯
+
+    // PB4: Push-Pull 出力
+    GPIOB->CFGLR &= ~(0xf << (4 * DEBUG_LED1_PIN));
+    GPIOB->CFGLR |= (GPIO_Speed_50MHz | GPIO_CNF_OUT_PP) << (4 * DEBUG_LED1_PIN);
+    GPIOB->BSHR = (1 << DEBUG_LED1_PIN);  // High = 消灯
+}
+
+static void debug_led_set(uint8_t led, uint8_t on) {
+    uint8_t pin = (led == 0) ? DEBUG_LED0_PIN : DEBUG_LED1_PIN;
+    if (led > 1) return;
+    if (on) {
+        GPIOB->BCR = (1 << pin);   // Low = 点灯
+    } else {
+        GPIOB->BSHR = (1 << pin);  // High = 消灯
+    }
+}
+
+// ---------------------------------------------------------------------------
 // GPIO 初期化
 // ---------------------------------------------------------------------------
 
@@ -278,6 +309,8 @@ static void process_midi_event(uint8_t cin, uint8_t midi0, uint8_t midi1, uint8_
             x68k_keyboard_send(midi1 & 0x7F);  // bit7=0 → make
         } else if (channel == MIDI_CH_JOYSTICK) {
             joystick_set_button(midi1, 1);
+        } else if (channel == MIDI_CH_STATUS) {
+            debug_led_set(midi1, 1);  // note 0→PB3, note 1→PB4
         }
         break;
 
@@ -286,6 +319,8 @@ static void process_midi_event(uint8_t cin, uint8_t midi0, uint8_t midi1, uint8_
             x68k_keyboard_send(0x80 | (midi1 & 0x7F));  // bit7=1 → break
         } else if (channel == MIDI_CH_JOYSTICK) {
             joystick_set_button(midi1, 0);
+        } else if (channel == MIDI_CH_STATUS) {
+            debug_led_set(midi1, 0);
         }
         break;
 
@@ -304,7 +339,10 @@ int main() {
     RCC->CTLR |= RCC_HSION;  // HSI (48MHz) ON
 
     // ポートクロック有効化
-    RCC->APB2PCENR |= RCC_IOPAEN | RCC_IOPCEN | RCC_AFIOEN;
+    RCC->APB2PCENR |= RCC_IOPAEN | RCC_IOPBEN | RCC_IOPCEN | RCC_AFIOEN;
+
+    // デバッグ LED 初期化 (PB3, PB4: Low アクティブ)
+    gpio_init_debug_leds();
 
     // 周辺初期化
     gpio_init_joystick();
