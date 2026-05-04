@@ -26,6 +26,9 @@ static uint8_t tx_buf[MIDI_TX_BUF_SIZE * 4];
 static uint8_t tx_head;  // main loop writes here
 static uint8_t tx_tail;  // poll flushes from here
 
+// デバッグ: USBFS_SendEndpoint の最後の戻り値
+volatile int debug_send_result;
+
 // ---------------------------------------------------------------------------
 // fsusb callbacks (called from USB ISR)
 // ---------------------------------------------------------------------------
@@ -35,8 +38,6 @@ int HandleInRequest(struct _USBState* ctx, int endp, uint8_t* data, int len) {
     (void)ctx;
     (void)data;
     (void)len;
-    // EP2 IN transfer completed - nothing to do here,
-    // next data will be armed by usb_midi_poll()
     return 0;
 }
 
@@ -44,13 +45,10 @@ int HandleInRequest(struct _USBState* ctx, int endp, uint8_t* data, int len) {
 void HandleDataOut(struct _USBState* ctx, int endp, uint8_t* data, int len) {
     (void)ctx;
     if (endp == 0) {
-        // Control transfer data out - acknowledge
         ctx->USBFS_SetupReqLen = 0;
         return;
     }
     if (endp == 1) {
-        // EP1 OUT: MIDI data from host
-        // USB-MIDI events are 4 bytes each
         for (int i = 0; i + 3 < len; i += 4) {
             uint8_t next_head = (rx_head + 1) & (MIDI_RX_BUF_SIZE - 1);
             if (next_head != rx_tail) {
@@ -61,7 +59,6 @@ void HandleDataOut(struct _USBState* ctx, int endp, uint8_t* data, int len) {
                 rx_buf[offset + 3] = data[i + 3];
                 rx_head = next_head;
             }
-            // else: buffer full, drop packet
         }
     }
 }
@@ -70,7 +67,6 @@ void HandleDataOut(struct _USBState* ctx, int endp, uint8_t* data, int len) {
 int HandleSetupCustom(struct _USBState* ctx, int setup_code) {
     (void)ctx;
     (void)setup_code;
-    // No custom setup requests needed for USB-MIDI
     return 0;
 }
 
@@ -83,13 +79,14 @@ void usb_midi_init(void) {
     rx_tail = 0;
     tx_head = 0;
     tx_tail = 0;
+    debug_send_result = 99;  // 未送信
     USBFSSetup();
 }
 
 int usb_midi_send_event(uint8_t cin, uint8_t midi0, uint8_t midi1, uint8_t midi2) {
     uint8_t next_head = (tx_head + 1) & (MIDI_TX_BUF_SIZE - 1);
     if (next_head == tx_tail) {
-        return -1;  // TX buffer full
+        return -1;
     }
     int offset = tx_head * 4;
     tx_buf[offset + 0] = (MIDI_CABLE_0 << 4) | (cin & 0x0F);
@@ -101,7 +98,7 @@ int usb_midi_send_event(uint8_t cin, uint8_t midi0, uint8_t midi1, uint8_t midi2
 }
 
 int usb_midi_send_sysex(const uint8_t* data, int len) {
-    if (len < 2) return -1;  // minimum: F0 ... F7
+    if (len < 2) return -1;
 
     int i = 0;
     while (i < len) {
@@ -110,7 +107,6 @@ int usb_midi_send_sysex(const uint8_t* data, int len) {
         uint8_t b0, b1, b2;
 
         if (remaining >= 3) {
-            // Check if this is the last 3 bytes and ends with F7
             if (remaining == 3 && data[i + 2] == 0xF7) {
                 cin = CIN_SYSEX_END_3;
             } else {
@@ -121,14 +117,12 @@ int usb_midi_send_sysex(const uint8_t* data, int len) {
             b2 = data[i + 2];
             i += 3;
         } else if (remaining == 2) {
-            // Last 2 bytes (must end with F7)
             cin = CIN_SYSEX_END_2;
             b0 = data[i];
             b1 = data[i + 1];
             b2 = 0;
             i += 2;
         } else {
-            // Last 1 byte (must be F7)
             cin = CIN_SYSEX_END_1;
             b0 = data[i];
             b1 = 0;
@@ -137,7 +131,7 @@ int usb_midi_send_sysex(const uint8_t* data, int len) {
         }
 
         if (usb_midi_send_event(cin, b0, b1, b2) < 0) {
-            return -1;  // TX buffer full
+            return -1;
         }
     }
     return 0;
@@ -145,7 +139,7 @@ int usb_midi_send_sysex(const uint8_t* data, int len) {
 
 int usb_midi_receive_event(uint8_t* cin, uint8_t* midi0, uint8_t* midi1, uint8_t* midi2) {
     if (rx_head == rx_tail) {
-        return 0;  // No data available
+        return 0;
     }
     int offset = rx_tail * 4;
     *cin = rx_buf[offset + 0] & 0x0F;
@@ -175,6 +169,7 @@ void usb_midi_poll(void) {
     }
 
     if (count > 0) {
-        USBFS_SendEndpoint(2, count);
+        int ret = USBFS_SendEndpoint(2, count);
+        debug_send_result = ret;
     }
 }

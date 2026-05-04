@@ -410,6 +410,8 @@ int main() {
             uint8_t common_now = (GPIOA->INDR >> JOY_PIN_COMMON) & 1;
             if (common_now != joy_common_prev) {
                 joy_common_prev = common_now;
+                // デバッグ: COMMON の状態を PB3 LED に反映
+                debug_led_set(0, common_now);
                 if (common_now) {
                     usb_midi_note_on(MIDI_CH_JOYSTICK, JOY_NOTE_COMMON, 0x7F);
                 } else {
@@ -431,5 +433,19 @@ int main() {
 
         // USB-MIDI TX バッファをフラッシュ
         usb_midi_poll();
+
+        // デバッグ: SendEndpoint の戻り値を PB4 LED で表示
+        // 0=成功, -1=busy, -2=setup中, -3=setup_act, 99=未送信
+        {
+            extern volatile int debug_send_result;
+            if (debug_send_result == 0) {
+                debug_led_set(1, 1);   // 成功: PB4 点灯
+            } else if (debug_send_result == -1) {
+                // Busy: PB4 点滅 (高速)
+                static uint32_t blink;
+                debug_led_set(1, (++blink >> 16) & 1);
+            }
+            // -2, -3, 99: PB4 消灯のまま
+        }
     }
 }
