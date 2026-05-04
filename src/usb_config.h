@@ -13,9 +13,8 @@
 #include "ch32fun.h"
 
 #define FUSB_CONFIG_EPS       3  // EP0 + EP1 + EP2
-// fsusb の mode: 1 = TX_EN (IN, device→host), -1 = RX_EN (OUT, host→device)
-#define USBFS_EP1_MODE       -1  // EP1 OUT (host → device): MIDI 受信
-#define USBFS_EP2_MODE        1  // EP2 IN  (device → host): MIDI 送信
+// fsusb の mode: 1 = TX_EN (IN), -1 = RX_EN (OUT), 2 = 双方向 (TX+RX, AUTO_TOG)
+#define USBFS_EP2_MODE        2  // EP2 双方向: OUT (MIDI受信) + IN (MIDI送信)
 #define FUSB_SUPPORTS_SLEEP   0
 #define FUSB_HID_INTERFACES   0
 #define FUSB_CURSED_TURBO_DMA 0
@@ -164,17 +163,17 @@ static const uint8_t config_descriptor[] = {
     0x01,                   // baSourcePin(1)
     0x00,                   // iJack
 
-    // --- EP1 OUT (Bulk) - Host to Device ---
+    // --- EP2 OUT (Bulk) - Host to Device ---
     0x09,                   // bLength
     0x05,                   // bDescriptorType (Endpoint)
-    0x01,                   // bEndpointAddress (OUT, EP1)
+    0x02,                   // bEndpointAddress (OUT, EP2)
     0x02,                   // bmAttributes (Bulk)
     0x40, 0x00,             // wMaxPacketSize (64)
     0x00,                   // bInterval
     0x00,                   // bRefresh
     0x00,                   // bSynchAddress
 
-    // --- CS Endpoint Descriptor (for EP1 OUT) ---
+    // --- CS Endpoint Descriptor (for EP2 OUT) ---
     0x05,                   // bLength
     0x25,                   // bDescriptorType (CS_ENDPOINT)
     0x01,                   // bDescriptorSubtype (MS_GENERAL)
