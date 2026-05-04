@@ -111,8 +111,8 @@ static void debug_led_set(uint8_t led, uint8_t on) {
 static void gpio_init_joystick(void) {
     for (int i = 0; i < 6; i++) {
         GPIOA->CFGLR &= ~(0xf << (4 * i));
-        GPIOA->CFGLR |= (GPIO_Speed_50MHz | GPIO_CNF_OUT_PP) << (4 * i);
-        GPIOA->BSHR = (1 << i);  // High = 非アクティブ (active-low)
+        GPIOA->CFGLR |= (GPIO_Speed_50MHz | GPIO_CNF_OUT_OD) << (4 * i);
+        GPIOA->BSHR = (1 << i);  // High = Hi-Z (レトロPC側プルアップ)
     }
 }
 
