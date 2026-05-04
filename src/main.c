@@ -57,13 +57,40 @@ static const char DEVICE_NAME[] = "smart-retro-hid-x68k-kb";
 // CC 番号 (状態通知)
 #define CC_DEVICE_CONNECTED  0x00
 
-// ジョイスティック ボタン番号 (Note 番号にマッピング)
-#define JOY_UP      0
-#define JOY_DOWN    1
-#define JOY_LEFT    2
-#define JOY_RIGHT   3
-#define JOY_BTN1    4
-#define JOY_BTN2    5
+// ジョイスティック GPIO ピンマッピング (PA0-PA7)
+// ATARI D-SUB 9pin:
+//   Pin1=UP, Pin2=DOWN, Pin3=LEFT, Pin4=RIGHT, Pin6=TRIG-A, Pin7=TRIG-B, Pin8=COMMON
+#define JOY_PIN_UP      1  // PA1: UP     (D-SUB pin 1)
+#define JOY_PIN_DOWN    2  // PA2: DOWN   (D-SUB pin 2)
+#define JOY_PIN_LEFT    3  // PA3: LEFT   (D-SUB pin 3)
+#define JOY_PIN_RIGHT   4  // PA4: RIGHT  (D-SUB pin 4)
+#define JOY_PIN_TRIG_A  6  // PA6: TRIG-A (D-SUB pin 6)
+#define JOY_PIN_TRIG_B  7  // PA7: TRIG-B (D-SUB pin 7)
+#define JOY_PIN_COMMON  0  // PA0: COMMON (D-SUB pin 8, 入力: 通常GND、本体側でHighにできる)
+
+// MIDI Note 番号 → GPIO ピンの変換テーブル
+// Note 1=UP, 2=DOWN, 3=LEFT, 4=RIGH (存在しない), 6=TRIG-A, 7=TRIG-B
+// Note 8 = COMMON 入力状態 (デバイス→ホスト通知用、出力には使わない)
+#define JOY_NOTE_UP      1
+#define JOY_NOTE_DOWN    2
+#define JOY_NOTE_LEFT    3
+#define JOY_NOTE_RIGHT   4
+#define JOY_NOTE_TRIG_A  6
+#define JOY_NOTE_TRIG_B  7
+#define JOY_NOTE_COMMON  8  // COMMON 入力状態の通知用
+
+// Note 番号 → GPIO ピン変換 (0xFF = 無効)
+static uint8_t joy_note_to_pin(uint8_t note) {
+    switch (note) {
+    case JOY_NOTE_UP:     return JOY_PIN_UP;
+    case JOY_NOTE_DOWN:   return JOY_PIN_DOWN;
+    case JOY_NOTE_LEFT:   return JOY_PIN_LEFT;
+    case JOY_NOTE_RIGHT:  return JOY_PIN_RIGHT;
+    case JOY_NOTE_TRIG_A: return JOY_PIN_TRIG_A;
+    case JOY_NOTE_TRIG_B: return JOY_PIN_TRIG_B;
+    default:              return 0xFF;
+    }
+}
 
 // Capability Types
 #define CAP_LED_COUNT     0x03
@@ -106,14 +133,26 @@ static void debug_led_set(uint8_t led, uint8_t on) {
 // GPIO 初期化
 // ---------------------------------------------------------------------------
 
-// ATARI ジョイスティック用 GPIO (出力)
-// PA0: 上, PA1: 下, PA2: 左, PA3: 右, PA4: ボタン1, PA5: ボタン2
+// ATARI ジョイスティック用 GPIO
+// PA1-PA4,PA6,PA7: オープンドレイン出力 (方向+ボタン)
+// PA0: 入力 (COMMON, 通常GND、本体側でHighにできる)
 static void gpio_init_joystick(void) {
-    for (int i = 0; i < 6; i++) {
-        GPIOA->CFGLR &= ~(0xf << (4 * i));
-        GPIOA->CFGLR |= (GPIO_Speed_50MHz | GPIO_CNF_OUT_OD) << (4 * i);
-        GPIOA->BSHR = (1 << i);  // High = Hi-Z (レトロPC側プルアップ)
+    // 出力ピン (オープンドレイン)
+    const uint8_t out_pins[] = {
+        JOY_PIN_UP, JOY_PIN_DOWN, JOY_PIN_LEFT,
+        JOY_PIN_RIGHT, JOY_PIN_TRIG_A, JOY_PIN_TRIG_B
+    };
+    for (int i = 0; i < (int)(sizeof(out_pins) / sizeof(out_pins[0])); i++) {
+        uint8_t p = out_pins[i];
+        GPIOA->CFGLR &= ~(0xf << (4 * p));
+        GPIOA->CFGLR |= (GPIO_Speed_50MHz | GPIO_CNF_OUT_OD) << (4 * p);
+        GPIOA->BSHR = (1 << p);  // High = Hi-Z
     }
+
+    // COMMON (PA0): 入力、プルダウン (通常GND)
+    GPIOA->CFGLR &= ~(0xf << (4 * JOY_PIN_COMMON));
+    GPIOA->CFGLR |= (GPIO_Speed_In | GPIO_CNF_IN_PUPD) << (4 * JOY_PIN_COMMON);
+    GPIOA->BCR = (1 << JOY_PIN_COMMON);  // Pull-Down
 }
 
 // X68000 キーボード用 UART 初期化
@@ -140,20 +179,29 @@ static void uart_init_x68k_keyboard(void) {
 // ATARI ジョイスティック制御
 // ---------------------------------------------------------------------------
 
-static void joystick_set_button(uint8_t button, uint8_t pressed) {
-    if (button > 5) return;
+static void joystick_set_button(uint8_t note, uint8_t pressed) {
+    uint8_t pin = joy_note_to_pin(note);
+    if (pin == 0xFF) return;
     if (pressed) {
-        GPIOA->BCR = (1 << button);   // Low = アクティブ
+        GPIOA->BCR = (1 << pin);   // Low = アクティブ
     } else {
-        GPIOA->BSHR = (1 << button);  // High = 非アクティブ
+        GPIOA->BSHR = (1 << pin);  // High = Hi-Z
     }
 }
 
 static void joystick_release_all(void) {
-    for (int i = 0; i < 6; i++) {
-        GPIOA->BSHR = (1 << i);
+    const uint8_t notes[] = {
+        JOY_NOTE_UP, JOY_NOTE_DOWN, JOY_NOTE_LEFT,
+        JOY_NOTE_RIGHT, JOY_NOTE_TRIG_A, JOY_NOTE_TRIG_B
+    };
+    for (int i = 0; i < (int)(sizeof(notes) / sizeof(notes[0])); i++) {
+        uint8_t pin = joy_note_to_pin(notes[i]);
+        GPIOA->BSHR = (1 << pin);
     }
 }
+
+// COMMON 入力の前回状態 (0=Low/GND, 1=High/+5V)
+static uint8_t joy_common_prev;
 
 // ---------------------------------------------------------------------------
 // X68000 キーボード制御
@@ -355,6 +403,19 @@ int main() {
         // USB-MIDI からコマンド受信・処理
         while (usb_midi_receive_event(&cin, &midi0, &midi1, &midi2) > 0) {
             process_midi_event(cin, midi0, midi1, midi2);
+        }
+
+        // COMMON (PA0) 入力の変化を検出 → Note 8 で通知
+        {
+            uint8_t common_now = (GPIOA->INDR >> JOY_PIN_COMMON) & 1;
+            if (common_now != joy_common_prev) {
+                joy_common_prev = common_now;
+                if (common_now) {
+                    usb_midi_note_on(MIDI_CH_JOYSTICK, JOY_NOTE_COMMON, 0x7F);
+                } else {
+                    usb_midi_note_off(MIDI_CH_JOYSTICK, JOY_NOTE_COMMON, 0x00);
+                }
+            }
         }
 
         // X68000 本体からの LED コマンド受信 → ホストに通知
