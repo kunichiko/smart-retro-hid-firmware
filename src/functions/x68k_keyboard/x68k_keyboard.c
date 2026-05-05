@@ -22,7 +22,10 @@
 // ---------------------------------------------------------------------------
 
 #define MIDI_CH_KEYBOARD  1   // ホスト→デバイス: キー押下/解放
-#define MIDI_CH_LED       14  // デバイス→ホスト: LED 状態通知
+                              // デバイス→ホスト: ターゲット機受信バイト (SysEx TARGET_RX)
+
+// SysEx TARGET_RX (0x05): ターゲット機から受信した生バイトをホストへ転送
+#define SYSEX_CMD_TARGET_RX  0x05
 
 // ---------------------------------------------------------------------------
 // 送信キュー (READY=Low の間にキーが来ても取りこぼさないため)
@@ -104,25 +107,21 @@ static void drain_tx_queue(void) {
 // ホスト→キーボード コマンド処理
 // ---------------------------------------------------------------------------
 
-// LED 状態通知をホストに送る
-// X68000 LED コマンド: bit7=1, 各ビット 0=点灯, 1=消灯
-//   bit0: かな, bit1: ローマ字, bit2: コード入力, bit3: CAPS,
-//   bit4: INS, bit5: ひらがな, bit6: 全角
-static void notify_led_state(uint8_t cmd) {
-    for (int i = 0; i < 7; i++) {
-        // X68000: 0=点灯, 1=消灯 → MIDI: 127=点灯, 0=消灯 に変換
-        uint8_t off = (cmd >> i) & 1;
-        usb_midi_control_change(MIDI_CH_LED, i, off ? 0 : 127);
-    }
-}
-
-static void process_received_command(uint8_t cmd) {
-    if (cmd & 0x80) {
-        // LED 制御
-        notify_led_state(cmd);
-    }
-    // 0x60-0x7F: キーリピート設定 (現状は未対応、受信のみ)
-    // TODO: リピート遅延/間隔をホストに通知 or 内部で保持
+// 受信バイトを SysEx TARGET_RX (0x05) で生のままホストへ転送する。
+// アプリ側でターゲット機固有のコマンド (LED 制御 / キーリピート設定 /
+// LED 輝度など) を解釈する。
+//
+// SysEx レイアウト:
+//   F0 7D 01 05 <midi_channel> <byte_hi4> <byte_lo4> F7
+static void forward_target_rx(uint8_t byte) {
+    uint8_t sysex[8] = {
+        0xF0, 0x7D, 0x01, SYSEX_CMD_TARGET_RX,
+        MIDI_CH_KEYBOARD,
+        (uint8_t)((byte >> 4) & 0x0F),
+        (uint8_t)(byte & 0x0F),
+        0xF7,
+    };
+    usb_midi_send_sysex(sysex, sizeof(sysex));
 }
 
 // ---------------------------------------------------------------------------
@@ -149,10 +148,10 @@ static void x68k_kb_on_note_off(uint8_t note) {
 }
 
 static void x68k_kb_poll(void) {
-    // RX: ホストからのコマンドを処理
+    // RX: ターゲット機から届いた生バイトを SysEx でアプリに転送
     int byte = uart_receive();
     if (byte >= 0) {
-        process_received_command((uint8_t)byte);
+        forward_target_rx((uint8_t)byte);
     }
     // TX: READY=High かつ TXE=1 の間、キューから送り出す
     drain_tx_queue();
