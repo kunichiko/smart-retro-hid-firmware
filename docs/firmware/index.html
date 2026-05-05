@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mimic X Firmware Update</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 720px;
+            margin: 40px auto;
+            padding: 0 20px;
+            background: #1a1a2e;
+            color: #e0e0e0;
+        }
+        h1 {
+            color: #00d2ff;
+            border-bottom: 2px solid #00d2ff;
+            padding-bottom: 10px;
+        }
+        h3 {
+            margin-top: 0;
+            color: #b8c5d1;
+        }
+        .section {
+            background: #16213e;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        select, input[type="file"] {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 12px;
+            border: 1px solid #444;
+            border-radius: 4px;
+            background: #0f3460;
+            color: #e0e0e0;
+        }
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-right: 8px;
+            transition: background 0.2s;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        #btn-connect {
+            background: #00d2ff;
+            color: #000;
+        }
+        #btn-connect:hover:not(:disabled) {
+            background: #00a8cc;
+        }
+        #btn-flash {
+            background: #e94560;
+            color: #fff;
+        }
+        #btn-flash:hover:not(:disabled) {
+            background: #c73e54;
+        }
+        .progress-container {
+            margin: 12px 0;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 24px;
+            background: #0f3460;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 4px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #00d2ff;
+            width: 0%;
+            transition: width 0.1s;
+        }
+        .progress-fill.verify {
+            background: #53d769;
+        }
+        #status {
+            margin-top: 16px;
+            padding: 12px;
+            border-radius: 4px;
+            min-height: 20px;
+        }
+        .status-info { background: #0f3460; }
+        .status-success { background: #1b4332; color: #53d769; }
+        .status-error { background: #3d0000; color: #e94560; }
+        .warning {
+            background: #3d3000;
+            color: #ffd700;
+            padding: 12px;
+            border-radius: 4px;
+            margin: 12px 0;
+            font-size: 14px;
+        }
+        .step {
+            margin: 8px 0;
+            padding-left: 20px;
+        }
+        .step::before {
+            content: counter(step) ". ";
+            counter-increment: step;
+            font-weight: bold;
+            color: #00d2ff;
+        }
+        .steps {
+            counter-reset: step;
+        }
+        #chip-info {
+            display: none;
+        }
+        #chip-info.visible {
+            display: block;
+        }
+        .file-section {
+            border-top: 1px solid #333;
+            margin-top: 16px;
+            padding-top: 16px;
+        }
+        .version-info {
+            font-size: 13px;
+            color: #888;
+            margin-top: -8px;
+            margin-bottom: 12px;
+        }
+        .variant-desc {
+            font-size: 13px;
+            color: #b8c5d1;
+            margin-top: -8px;
+            margin-bottom: 12px;
+            line-height: 1.5;
+        }
+        a {
+            color: #00d2ff;
+        }
+    </style>
+</head>
+<body>
+    <h1>Mimic X Firmware Update</h1>
+
+    <p>
+        Mimic X (CH32X035) のファームウェアを Web ブラウザから書き込むページです。
+        プロジェクト: <a href="https://github.com/kunichiko/MimicX-firmware" target="_blank" rel="noopener">MimicX-firmware</a>
+    </p>
+
+    <div class="section">
+        <h3>準備</h3>
+        <div class="steps">
+            <div class="step">CH32X035 の BOOT ボタンを押しながら USB ケーブルを接続する（または BOOT を押しながら RESET を押して離す）</div>
+            <div class="step">このページで「デバイスに接続」ボタンを押す</div>
+            <div class="step">「QinHeng Electronics 製のデバイス」(または「WinChipHead 製の不明なデバイス」) を選択する</div>
+            <div class="step">基板に合うバリアントとバージョンを選択して「書き込み」を押す</div>
+            <div class="step">書き込み完了後、USB ケーブルを抜き差しして通常モードで起動する</div>
+        </div>
+        <div class="warning">
+            Chromium 系ブラウザ（Chrome, Edge）が必要です。Safari / Firefox は WebUSB に対応していません。
+        </div>
+    </div>
+
+    <div class="section">
+        <button id="btn-connect">デバイスに接続</button>
+        <div id="chip-info">
+            <p>チップ: <strong id="chip-name">-</strong> / ブートローダー: <strong id="bootloader-ver">-</strong></p>
+        </div>
+    </div>
+
+    <div class="section">
+        <label for="variant-select">基板バリアント</label>
+        <select id="variant-select">
+            <option value="" disabled selected>-- バリアントを選択 --</option>
+            <option value="joystick">ジョイスティック (ATARI / メガドライブ 6 ボタン)</option>
+            <option value="x68k_keyboard">X68000 キーボード単体</option>
+            <option value="x68k_full">X68000 キーボード + マウス</option>
+        </select>
+        <div class="variant-desc" id="variant-desc">
+            ご使用の Mimic X 基板に合わせて選択してください。
+        </div>
+
+        <label for="firmware-select">ファームウェアバージョン</label>
+        <select id="firmware-select" disabled>
+            <option value="" disabled selected>-- 先にバリアントを選択してください --</option>
+        </select>
+        <div class="version-info" id="firmware-size"></div>
+
+        <div id="file-section" class="file-section" style="display:none;">
+            <label for="firmware-file">ローカルの .bin ファイル</label>
+            <input type="file" id="firmware-file" accept=".bin">
+        </div>
+
+        <button id="btn-flash" disabled>書き込み</button>
+
+        <div class="progress-container">
+            <label>書き込み:</label>
+            <div class="progress-bar"><div class="progress-fill" id="progress-write"></div></div>
+            <label>検証:</label>
+            <div class="progress-bar"><div class="progress-fill verify" id="progress-verify"></div></div>
+        </div>
+
+        <div id="status" class="status-info">デバイスを接続してください</div>
+    </div>
+
+    <script type="module">
+        import { CH32Flasher } from './ch32flasher.js';
+
+        // バリアント定義: 各バリアントのリリース一覧 (新しい順)
+        const VARIANTS = {
+            joystick: {
+                desc: 'ATARI 仕様 / メガドライブ 6 ボタンファイティングパッドを模倣する基板向け。',
+                releases: [
+                    { version: 'v0.4.0', date: '2026-05-05', file: 'firmwares/mimicx_joystick_v0.4.0.bin', note: '初回リリース' },
+                ],
+            },
+            x68k_keyboard: {
+                desc: 'X68000 キーボードのみを模倣する基板向け (USART2: PA15/PA16, READY: PA17)。',
+                releases: [
+                    { version: 'v0.4.0', date: '2026-05-05', file: 'firmwares/mimicx_x68k_keyboard_v0.4.0.bin', note: '初回リリース' },
+                ],
+            },
+            x68k_full: {
+                desc: 'X68000 キーボード + マウスを模倣する基板向け (キーボード + USART3 PA18: MSDATA, MSCTRL 検出)。',
+                releases: [
+                    { version: 'v0.4.0', date: '2026-05-05', file: 'firmwares/mimicx_x68k_full_v0.4.0.bin', note: '初回リリース' },
+                ],
+            },
+        };
+
+        const flasher = new CH32Flasher();
+        let firmwareData = null;
+        let connected = false;
+
+        const btnConnect = document.getElementById('btn-connect');
+        const btnFlash = document.getElementById('btn-flash');
+        const variantSelect = document.getElementById('variant-select');
+        const variantDesc = document.getElementById('variant-desc');
+        const firmwareSelect = document.getElementById('firmware-select');
+        const fileInput = document.getElementById('firmware-file');
+        const fileSection = document.getElementById('file-section');
+        const firmwareSize = document.getElementById('firmware-size');
+        const chipInfo = document.getElementById('chip-info');
+        const chipName = document.getElementById('chip-name');
+        const bootloaderVer = document.getElementById('bootloader-ver');
+        const progressWrite = document.getElementById('progress-write');
+        const progressVerify = document.getElementById('progress-verify');
+        const status = document.getElementById('status');
+
+        function setStatus(msg, type = 'info') {
+            status.textContent = msg;
+            status.className = `status-${type}`;
+        }
+
+        function updateFlashButton() {
+            btnFlash.disabled = !connected || !firmwareData;
+        }
+
+        function populateFirmwareList(variantKey) {
+            firmwareSelect.innerHTML = '';
+            const variant = VARIANTS[variantKey];
+            if (!variant) {
+                firmwareSelect.disabled = true;
+                return;
+            }
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.disabled = true;
+            placeholder.selected = true;
+            placeholder.textContent = '-- バージョンを選択 --';
+            firmwareSelect.appendChild(placeholder);
+
+            for (const r of variant.releases) {
+                const opt = document.createElement('option');
+                opt.value = r.file;
+                opt.textContent = `${r.version} (${r.date})${r.note ? ' - ' + r.note : ''}`;
+                firmwareSelect.appendChild(opt);
+            }
+
+            const localOpt = document.createElement('option');
+            localOpt.value = '__local__';
+            localOpt.textContent = 'ローカルファイルから選択...';
+            firmwareSelect.appendChild(localOpt);
+
+            firmwareSelect.disabled = !connected;
+        }
+
+        variantSelect.addEventListener('change', () => {
+            const v = variantSelect.value;
+            if (!v) return;
+            variantDesc.textContent = VARIANTS[v].desc;
+            populateFirmwareList(v);
+            firmwareData = null;
+            firmwareSize.textContent = '';
+            fileSection.style.display = 'none';
+            fileInput.value = '';
+            updateFlashButton();
+        });
+
+        btnConnect.addEventListener('click', async () => {
+            try {
+                setStatus('接続中...');
+                btnConnect.disabled = true;
+                await flasher.connect();
+                const info = await flasher.detect();
+                chipName.textContent = info.chipName;
+                bootloaderVer.textContent = `v${info.bootloader}`;
+                chipInfo.classList.add('visible');
+                connected = true;
+                if (variantSelect.value) {
+                    firmwareSelect.disabled = false;
+                }
+                fileInput.disabled = false;
+                updateFlashButton();
+                setStatus(`${info.chipName} に接続しました (bootloader v${info.bootloader})`, 'success');
+            } catch (e) {
+                setStatus(`接続エラー: ${e.message}`, 'error');
+                btnConnect.disabled = false;
+            }
+        });
+
+        firmwareSelect.addEventListener('change', async () => {
+            const url = firmwareSelect.value;
+            if (!url) return;
+
+            if (url === '__local__') {
+                fileSection.style.display = 'block';
+                firmwareData = null;
+                firmwareSize.textContent = '';
+                updateFlashButton();
+                setStatus('ローカルの .bin ファイルを選択してください', 'info');
+                return;
+            }
+
+            fileSection.style.display = 'none';
+            fileInput.value = '';
+
+            try {
+                setStatus('ファームウェアをダウンロード中...');
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const buffer = await response.arrayBuffer();
+                firmwareData = new Uint8Array(buffer);
+                firmwareSize.textContent = `${firmwareData.length.toLocaleString()} bytes`;
+                updateFlashButton();
+                setStatus(`ファームウェア読み込み完了 (${firmwareData.length.toLocaleString()} bytes)`, 'info');
+            } catch (e) {
+                setStatus(`ダウンロードエラー: ${e.message}`, 'error');
+                firmwareData = null;
+                firmwareSize.textContent = '';
+                updateFlashButton();
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                firmwareData = new Uint8Array(ev.target.result);
+                firmwareSize.textContent = `${firmwareData.length.toLocaleString()} bytes`;
+                updateFlashButton();
+                setStatus(`ファイル読み込み完了: ${file.name} (${firmwareData.length.toLocaleString()} bytes)`, 'info');
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        btnFlash.addEventListener('click', async () => {
+            if (!firmwareData) return;
+            try {
+                btnFlash.disabled = true;
+                variantSelect.disabled = true;
+                firmwareSelect.disabled = true;
+                fileInput.disabled = true;
+                progressWrite.style.width = '0%';
+                progressVerify.style.width = '0%';
+
+                setStatus('書き込み中...');
+                await flasher.write(firmwareData, (p) => {
+                    progressWrite.style.width = `${Math.round(p * 100)}%`;
+                });
+
+                setStatus('検証中...');
+                await flasher.verify(firmwareData, (p) => {
+                    progressVerify.style.width = `${Math.round(p * 100)}%`;
+                });
+
+                setStatus('再起動中...');
+                await flasher.reboot();
+                await flasher.disconnect();
+
+                connected = false;
+                setStatus('書き込み完了! USB ケーブルを抜き差しして通常モードで起動してください。', 'success');
+                btnConnect.disabled = false;
+                variantSelect.disabled = false;
+            } catch (e) {
+                setStatus(`書き込みエラー: ${e.message}`, 'error');
+                variantSelect.disabled = false;
+                firmwareSelect.disabled = false;
+                fileInput.disabled = false;
+                updateFlashButton();
+            }
+        });
+    </script>
+</body>
+</html>

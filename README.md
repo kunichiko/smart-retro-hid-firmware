@@ -18,3 +18,11 @@
 - [MimicX-protocol](https://github.com/kunichiko/MimicX-protocol) - MIDI通信プロトコルライブラリ
 - [MimicX-app](https://github.com/kunichiko/MimicX-app) - Flutterアプリ
 - [MimicX-hardware](https://github.com/kunichiko/MimicX-hardware) - 基板設計データ
+
+## ファームウェア更新
+
+CH32X035 のファームウェアは Web ブラウザ (Chrome / Edge) から更新できます:
+
+<https://kunichiko.github.io/MimicX-firmware/firmware/>
+
+詳細: [docs/firmware/README.md](docs/firmware/README.md)
