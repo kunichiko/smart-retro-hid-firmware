@@ -6,9 +6,11 @@
 //   キーボード→本体: 1 byte/key (bit7=1:break, 0:make / bit6-0:scancode)
 //   本体→キーボード: LED 制御 (bit7=1) / リピート設定 (0x60-0x7F) など
 //
-// ピン:
-//   PC0: USART1_RX (本体→キーボードのコマンド受信)
-//   PC1: USART1_TX (キーコード送信)
+// ピン (CH32X035 C8T6 - PC0/PC1 が外に出ていないため USART2 リマップ):
+//   PA15: USART2_TX  (キーコード送信)
+//   PA16: USART2_RX  (本体→キーボードのコマンド受信)
+//   PA17: READY      (本体→キーボード, 1=ホスト準備完了, 0=送信抑止)
+//   AFIO->PCFR1 USART2_REMAP = 0b010
 // ===================================================================================
 #include "x68k_keyboard.h"
 #include "ch32fun.h"
@@ -23,37 +25,79 @@
 #define MIDI_CH_LED       14  // デバイス→ホスト: LED 状態通知
 
 // ---------------------------------------------------------------------------
+// 送信キュー (READY=Low の間にキーが来ても取りこぼさないため)
+// ---------------------------------------------------------------------------
+
+#define TX_QUEUE_SIZE 32  // 2 のべき乗にしておくと head/tail のラップが安い
+static volatile uint8_t  tx_queue[TX_QUEUE_SIZE];
+static volatile uint16_t tx_head = 0;  // 次に書き込む位置
+static volatile uint16_t tx_tail = 0;  // 次に読み出す位置
+
+static inline int tx_queue_empty(void) { return tx_head == tx_tail; }
+
+static inline void tx_queue_push(uint8_t byte) {
+    uint16_t next = (tx_head + 1) % TX_QUEUE_SIZE;
+    if (next == tx_tail) return;  // フル: 古いほうを優先して新規を捨てる
+    tx_queue[tx_head] = byte;
+    tx_head = next;
+}
+
+// READY 信号 (PA17): 1=ホスト準備完了, 0=送信抑止
+static inline int host_ready(void) {
+    return (GPIOA->INDR & GPIO_INDR_IDR17) != 0;
+}
+
+// ---------------------------------------------------------------------------
 // UART 駆動
 // ---------------------------------------------------------------------------
 
 static void uart_init(void) {
-    RCC->APB2PCENR |= RCC_USART1EN;
+    RCC->APB1PCENR |= RCC_USART2EN;
 
-    // PC1 (TX): Push-Pull AF 出力
-    GPIOC->CFGLR &= ~(0xf << (4 * 1));
-    GPIOC->CFGLR |= (GPIO_Speed_50MHz | GPIO_CNF_OUT_PP_AF) << (4 * 1);
+    // USART2 を PA15(TX) / PA16(RX) にリマップ (PCFR1 USART2_REMAP = 0b010)
+    AFIO->PCFR1 = (AFIO->PCFR1 & ~AFIO_PCFR1_USART2_REMAP) | AFIO_PCFR1_USART2_REMAP_1;
 
-    // PC0 (RX): フローティング入力
-    GPIOC->CFGLR &= ~(0xf << (4 * 0));
-    GPIOC->CFGLR |= (GPIO_Speed_In | GPIO_CNF_IN_FLOATING) << (4 * 0);
+    // PA15 (TX): Push-Pull AF 出力 — CFGHR bit field for pin 15
+    GPIOA->CFGHR &= ~(0xf << (4 * (15 - 8)));
+    GPIOA->CFGHR |= (GPIO_Speed_50MHz | GPIO_CNF_OUT_PP_AF) << (4 * (15 - 8));
+
+    // PA16 (RX): フローティング入力 — CFGXR bit field for pin 16
+    // PA17 (READY): フローティング入力 — CFGXR bit field for pin 17
+    GPIOA->CFGXR &= ~((0xf << (4 * (16 - 16))) | (0xf << (4 * (17 - 16))));
+    GPIOA->CFGXR |=  ((GPIO_Speed_In | GPIO_CNF_IN_FLOATING) << (4 * (16 - 16))) |
+                     ((GPIO_Speed_In | GPIO_CNF_IN_FLOATING) << (4 * (17 - 16)));
 
     // 2400bps 8N1
-    USART1->BRR = F_CPU / 2400;
-    USART1->CTLR1 = USART_CTLR1_TE | USART_CTLR1_RE;
-    USART1->CTLR1 |= USART_CTLR1_UE;
+    USART2->BRR = F_CPU / 2400;
+    USART2->CTLR1 = USART_CTLR1_TE | USART_CTLR1_RE;
+    USART2->CTLR1 |= USART_CTLR1_UE;
 }
 
-static void uart_send(uint8_t byte) {
-    while (!(USART1->STATR & USART_STATR_TXE));
-    USART1->DATAR = byte;
+// TX レジスタが空いていて READY=High なら 1 byte 送り出す
+static int uart_try_send(uint8_t byte) {
+    if (!host_ready()) return 0;
+    if (!(USART2->STATR & USART_STATR_TXE)) return 0;
+    USART2->DATAR = byte;
+    return 1;
 }
 
 // 受信データがあれば返す。なければ -1
 static int uart_receive(void) {
-    if (USART1->STATR & USART_STATR_RXNE) {
-        return (uint8_t)USART1->DATAR;
+    if (USART2->STATR & USART_STATR_RXNE) {
+        return (uint8_t)USART2->DATAR;
     }
     return -1;
+}
+
+// キューにある間、可能な限り送り出す
+static void drain_tx_queue(void) {
+    uint8_t byte;
+    while (!tx_queue_empty()) {
+        // peek: 送信できるか試して、成功した時だけキューから取り除く
+        byte = tx_queue[tx_tail];
+        if (!uart_try_send(byte)) return;
+        tx_tail = (tx_tail + 1) % TX_QUEUE_SIZE;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -96,19 +140,22 @@ static void x68k_kb_release_all(void) {
 static void x68k_kb_on_note_on(uint8_t note, uint8_t velocity) {
     (void)velocity;
     // bit7=0 = make, bit6-0 = スキャンコード
-    uart_send(note & 0x7F);
+    tx_queue_push(note & 0x7F);
 }
 
 static void x68k_kb_on_note_off(uint8_t note) {
     // bit7=1 = break
-    uart_send(0x80 | (note & 0x7F));
+    tx_queue_push(0x80 | (note & 0x7F));
 }
 
 static void x68k_kb_poll(void) {
+    // RX: ホストからのコマンドを処理
     int byte = uart_receive();
     if (byte >= 0) {
         process_received_command((uint8_t)byte);
     }
+    // TX: READY=High かつ TXE=1 の間、キューから送り出す
+    drain_tx_queue();
 }
 
 static int x68k_kb_append_capabilities(uint8_t* buf, int max_len) {
