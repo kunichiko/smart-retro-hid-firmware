@@ -16,6 +16,9 @@
 #include "ch32fun.h"
 #include "funconfig.h"
 #include "../../usb_midi.h"
+#if defined(BOARD_X68K_FULL)
+#include "../x68k_mouse/x68k_mouse.h"
+#endif
 
 // ---------------------------------------------------------------------------
 // 設定
@@ -148,10 +151,21 @@ static void x68k_kb_on_note_off(uint8_t note) {
 }
 
 static void x68k_kb_poll(void) {
-    // RX: ターゲット機から届いた生バイトを SysEx でアプリに転送
+    // RX: ターゲット機から届いた生バイトを処理
     int byte = uart_receive();
     if (byte >= 0) {
-        forward_target_rx((uint8_t)byte);
+        const uint8_t b = (uint8_t)byte;
+#if defined(BOARD_X68K_FULL)
+        // 0b01000xxM (0x40-0x47): MSCTRL コマンド → 内蔵マウスサブシステムへ
+        // (アプリにも転送する必要はないので TARGET_RX には流さない)
+        if ((b & 0xF8) == 0x40) {
+            x68k_mouse_handle_msctrl(b);
+        } else {
+            forward_target_rx(b);
+        }
+#else
+        forward_target_rx(b);
+#endif
     }
     // TX: READY=High かつ TXE=1 の間、キューから送り出す
     drain_tx_queue();
