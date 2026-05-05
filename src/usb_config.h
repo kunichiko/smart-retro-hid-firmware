@@ -2,7 +2,7 @@
 #define _USB_CONFIG_H
 
 // ===================================================================================
-// USB-MIDI Configuration for smart-retro-hid
+// USB-MIDI Configuration for Mimic X
 // ===================================================================================
 // Uses ch32v003fun fsusb driver with FUSB_USER_HANDLERS.
 // EP1 OUT: Host → Device (MIDI data from smartphone)
@@ -36,7 +36,7 @@
 #define FUSB_USB_PID 0x0001
 #define FUSB_USB_REV 0x0100
 #define FUSB_STR_MANUFACTURER u"kunichiko"
-#define FUSB_STR_PRODUCT      u"smart-retro-hid"
+#define FUSB_STR_PRODUCT      u"Mimic X"
 #define FUSB_STR_SERIAL       u"001"
 
 // ---------------------------------------------------------------------------
