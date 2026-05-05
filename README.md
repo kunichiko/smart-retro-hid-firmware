@@ -1,4 +1,4 @@
-# smart-retro-hid-firmware
+# MimicX-firmware
 
 **製品名: Mimic X**
 
@@ -15,6 +15,6 @@
 
 ## 関連リポジトリ
 
-- [smart-retro-hid-protocol](../smart-retro-hid-protocol) - MIDI通信プロトコルライブラリ
-- [smart-retro-hid-app](../smart-retro-hid-app) - Flutterアプリ
-- [smart-retro-hid-hardware](../smart-retro-hid-hardware) - 基板設計データ
+- [MimicX-protocol](https://github.com/kunichiko/MimicX-protocol) - MIDI通信プロトコルライブラリ
+- [MimicX-app](https://github.com/kunichiko/MimicX-app) - Flutterアプリ
+- [MimicX-hardware](https://github.com/kunichiko/MimicX-hardware) - 基板設計データ

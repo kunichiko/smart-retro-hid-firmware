@@ -1,8 +1,8 @@
 // ===================================================================================
-// Project:  Mimic X (smart-retro-hid-firmware)
+// Project:  Mimic X (MimicX-firmware)
 // Author:   Kunihiko Ohnaka (@kunichiko)
 // Year:     2026
-// URL:      https://github.com/kunichiko/smart-retro-hid-firmware
+// URL:      https://github.com/kunichiko/MimicX-firmware
 // ===================================================================================
 //
 // USB-MIDI 経由でスマートフォンから制御コマンドを受信し、
@@ -12,7 +12,7 @@
 // hid_function_t を export し、board_config.h で有効化したものが
 // hid_dispatcher 経由で呼び出される。
 //
-// プロトコル仕様: https://github.com/kunichiko/smart-retro-hid-protocol
+// プロトコル仕様: https://github.com/kunichiko/MimicX-protocol
 // ===================================================================================
 
 #include <stdio.h>
@@ -25,7 +25,7 @@
 #include "board_config.h"
 
 // ---------------------------------------------------------------------------
-// プロトコル定数 (smart-retro-hid-protocol v0.3.0)
+// プロトコル定数 (MimicX-protocol v0.3.0)
 // ---------------------------------------------------------------------------
 
 #define PROTOCOL_VERSION_MAJOR  0
