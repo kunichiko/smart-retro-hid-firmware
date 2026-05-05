@@ -90,6 +90,12 @@ static inline void set_d0_d5(uint8_t d0, uint8_t d1, uint8_t d2, uint8_t d3, uin
 //   上位 16bit: BCx (Low にするピン)
 static volatile uint32_t md6_lut[8];
 
+// 両エッジ DMA 用に分割した LUT:
+//   md6_lut_falling[0..3] = md6_lut[0,2,4,6] (TH=LOW のステップ)
+//   md6_lut_rising[0..3]  = md6_lut[1,3,5,7] (TH=HIGH のステップ)
+static volatile uint32_t md6_lut_falling[4];
+static volatile uint32_t md6_lut_rising[4];
+
 #define D_PINS_MASK ((1<<PIN_D0)|(1<<PIN_D1)|(1<<PIN_D2)|(1<<PIN_D3)|(1<<PIN_D4)|(1<<PIN_D5))
 
 // btn_state を元に LUT を再計算する
@@ -142,6 +148,16 @@ static void md6_rebuild_lut(void) {
         }
         md6_lut[s] = set | (reset << 16);
     }
+
+    // 両エッジ DMA 用の分割 LUT を生成
+    md6_lut_falling[0] = md6_lut[0];  // Step 1
+    md6_lut_falling[1] = md6_lut[2];  // Step 3
+    md6_lut_falling[2] = md6_lut[4];  // Step 5
+    md6_lut_falling[3] = md6_lut[6];  // Step 7
+    md6_lut_rising[0]  = md6_lut[1];  // Step 2
+    md6_lut_rising[1]  = md6_lut[3];  // Step 4
+    md6_lut_rising[2]  = md6_lut[5];  // Step 6
+    md6_lut_rising[3]  = md6_lut[7];  // Step 8
 }
 
 // ---------------------------------------------------------------------------
@@ -158,58 +174,144 @@ static void atari_update_gpio(void) {
 }
 
 // ---------------------------------------------------------------------------
+// MD 6B: DMA + TIM2 input capture によるハードウェア駆動方式
+// ---------------------------------------------------------------------------
+// 構成:
+//   PA0 (TH) → TIM2_CH1 input capture (両エッジ)
+//   TIM2_CH1 capture event → DMA1_Channel5 trigger
+//   DMA1_Channel5: md6_lut[0..7] → GPIOA->BSHR を循環転送 (32bit, M2P)
+//
+// CPU 介入なしで TH の各エッジで GPIOA->BSHR が更新されるため
+// レイテンシは数サイクル (< 100ns) のはず。
+//
+// アイドル復帰時の DMA ポインタリセットは EXTI ISR で行う。
+// ---------------------------------------------------------------------------
+
+// DMA 設定の共通関数: チャネルに転送設定を入れて起動
+static void dma_channel_setup(DMA_Channel_TypeDef* ch, void* src, int count) {
+    ch->CFGR  = 0;
+    ch->PADDR = (uint32_t)&GPIOA->BSHR;
+    ch->MADDR = (uint32_t)src;
+    ch->CNTR  = count;
+    ch->CFGR =
+        (1 << 4)  | // DIR (memory → peripheral)
+        (1 << 5)  | // CIRC (circular)
+        (0 << 6)  | // PINC = 0
+        (1 << 7)  | // MINC = 1
+        (2 << 8)  | // PSIZE = 32bit
+        (2 << 10) | // MSIZE = 32bit
+        (3 << 12) | // PL = very high
+        (1 << 0);   // EN = 1
+}
+
+// DMA ポインタを先頭 (Step 1) に戻す
+static void md6_dma_reset(void) {
+    DMA1_Channel5->CFGR &= ~1;
+    DMA1_Channel5->CNTR  = 4;
+    DMA1_Channel5->MADDR = (uint32_t)md6_lut_falling;
+    DMA1_Channel5->CFGR |= 1;
+
+    DMA1_Channel7->CFGR &= ~1;
+    DMA1_Channel7->CNTR  = 4;
+    DMA1_Channel7->MADDR = (uint32_t)md6_lut_rising;
+    DMA1_Channel7->CFGR |= 1;
+}
+
+// TIM3: アイドル検出 watchdog (1.8ms)
+//   TIM2 のキャプチャ ISR が CNT=0 にリセットして再スタート
+//   TIM3 が overflow (= 1.8ms 経過) で割り込み → DMA ポインタを先頭に戻す
+static void md6_watchdog_setup(void) {
+    RCC->APB1PCENR |= RCC_TIM3EN;
+    TIM3->CTLR1 = 0;
+    TIM3->PSC   = 48 - 1;       // 48MHz / 48 = 1MHz (1us tick)
+    TIM3->ATRLR = 1800 - 1;     // 1.8ms で overflow
+    TIM3->CTLR1 |= TIM_OPM;     // One-Pulse Mode (overflow で停止)
+    TIM3->INTFR = 0;
+    TIM3->DMAINTENR = TIM_UIE;  // update interrupt 有効
+    NVIC_EnableIRQ(TIM3_IRQn);
+}
+
+// CH32X035 では TIM2 のキャプチャ割り込みは TIM2_CC_IRQHandler (TIM2_CC_IRQn=51)
+// TIM2_IRQHandler は Update 専用
+void TIM2_CC_IRQHandler(void) __attribute__((interrupt));
+void TIM2_CC_IRQHandler(void) {
+    // CC1IF + CC2IF をクリア (DMA はハードウェアで処理済み)
+    TIM2->INTFR = ~(TIM_CC1IF | TIM_CC2IF);
+    // TIM3 (watchdog) を再スタート
+    TIM3->CNT = 0;
+    TIM3->CTLR1 |= TIM_CEN;
+}
+
+void TIM3_IRQHandler(void) __attribute__((interrupt));
+void TIM3_IRQHandler(void) {
+    if (TIM3->INTFR & TIM_UIF) {
+        TIM3->INTFR = ~TIM_UIF;
+        // 1.8ms アイドル → DMA ポインタを先頭に戻す
+        md6_dma_reset();
+    }
+}
+
+static void md6_dma_setup(void) {
+    // RCC: TIM2 (APB1) と DMA1 (AHB) を有効化
+    RCC->APB1PCENR |= RCC_TIM2EN;
+    RCC->AHBPCENR  |= RCC_DMA1EN;
+
+    // PA0 を TIM2_CH1 入力に設定
+    AFIO->PCFR1 &= ~AFIO_PCFR1_TIM2_REMAP;  // No remap (TIM2_CH1 = PA0)
+    GPIOA->CFGLR &= ~(0xf << (4 * PIN_TH));
+    GPIOA->CFGLR |= (GPIO_Speed_In | GPIO_CNF_IN_FLOATING) << (4 * PIN_TH);
+
+    // TIM2 設定
+    TIM2->CTLR1 = 0;
+    TIM2->PSC   = 0;
+    TIM2->ATRLR = 0xFFFF;
+
+    // CHCTLR1:
+    //   CC1S = 01 (TI1 input) → CC1 が TI1 (PA0) からキャプチャ
+    //   CC2S = 10 (TI1 input) → CC2 も TI1 (PA0) からキャプチャ
+    TIM2->CHCTLR1 = (0x1 << 0) | (0x2 << 8);
+
+    // CCER:
+    //   CC1E + CC1P=1 → CC1 は falling edge でキャプチャ
+    //   CC2E + CC2P=0 → CC2 は rising edge でキャプチャ
+    TIM2->CCER = (1 << 0) | (1 << 1) | (1 << 4);  // CC1E | CC1P | CC2E
+
+    // DMA on CC1 + CC2 events, plus interrupt to kick the watchdog
+    TIM2->DMAINTENR = TIM_CC1DE | TIM_CC2DE | TIM_CC1IE | TIM_CC2IE;
+    NVIC_EnableIRQ(TIM2_CC_IRQn);
+
+    // アイドル検出 watchdog (TIM3) を初期化
+    md6_watchdog_setup();
+
+    // DMA1_Channel5: TIM2_CH1 (falling) → BSHR
+    dma_channel_setup(DMA1_Channel5, (void*)md6_lut_falling, 4);
+    // DMA1_Channel7: TIM2_CH2 (rising) → BSHR
+    dma_channel_setup(DMA1_Channel7, (void*)md6_lut_rising, 4);
+
+    // TIM2 開始
+    TIM2->CTLR1 |= TIM_CEN;
+}
+
+static void md6_dma_disable(void) {
+    DMA1_Channel5->CFGR &= ~1;
+    DMA1_Channel7->CFGR &= ~1;
+    TIM2->CTLR1 &= ~TIM_CEN;
+    TIM2->DMAINTENR = 0;
+    NVIC_DisableIRQ(TIM2_CC_IRQn);
+    TIM3->CTLR1 &= ~TIM_CEN;
+    TIM3->DMAINTENR = 0;
+    NVIC_DisableIRQ(TIM3_IRQn);
+}
+
+// ---------------------------------------------------------------------------
 // TH 割り込みハンドラ (EXTI line 0, PA0)
 // ---------------------------------------------------------------------------
 
-// 最初の TH エッジで割り込み発生 → そのまま ISR 内でポーリングで全ステップ処理
-// ポインタをローカル const に置いてループ外でレジスタ確保することで内ループの命令数を減らす
-
-// 戻り値: 1=エッジ検出, 0=タイムアウト
-static inline __attribute__((always_inline))
-int wait_th_state(volatile uint32_t* indr, uint32_t mask, uint32_t target, uint32_t timeout) {
-    uint32_t v;
-    do {
-        v = (*indr) & mask;
-        if ((target ? v : !v)) return 1;
-    } while (--timeout);
-    return 0;
-}
-
-void EXTI7_0_IRQHandler(void) __attribute__((interrupt, optimize("O3")));
+// EXTI 割り込み (PA0 falling edge) は使用しない (DMA がすべて処理する)
+// 古いハンドラを無効化するため空実装
+void EXTI7_0_IRQHandler(void) __attribute__((interrupt));
 void EXTI7_0_IRQHandler(void) {
     EXTI->INTFR = (1 << PIN_TH);
-
-    volatile uint32_t* const indr_p = &GPIOA->INDR;
-    volatile uint32_t* const bshr_p = &GPIOA->BSHR;
-    const uint32_t mask = (1 << PIN_TH);
-    const uint32_t timeout = 1000;
-
-    // 最初のエッジ (TH=LOW = Step 1): すぐ出力
-    *bshr_p = md6_lut[0];
-
-    if (!wait_th_state(indr_p, mask, 1, timeout)) goto done;
-    *bshr_p = md6_lut[1];
-    if (!wait_th_state(indr_p, mask, 0, timeout)) goto done;
-    *bshr_p = md6_lut[2];
-    if (!wait_th_state(indr_p, mask, 1, timeout)) goto done;
-    *bshr_p = md6_lut[3];
-    if (!wait_th_state(indr_p, mask, 0, timeout)) goto done;
-    *bshr_p = md6_lut[4];
-    if (!wait_th_state(indr_p, mask, 1, timeout)) goto done;
-    *bshr_p = md6_lut[5];
-    if (!wait_th_state(indr_p, mask, 0, timeout)) goto done;
-    *bshr_p = md6_lut[6];
-    if (!wait_th_state(indr_p, mask, 1, timeout)) goto done;
-    *bshr_p = md6_lut[7];
-
-done:
-    // アイドル時 (TH=HIGH) の Step 2 状態に戻す
-    *bshr_p = md6_lut[1];
-
-    // ポーリング中に発生した falling edge による pending を全クリア
-    // EXTI フラグ (W1C) と NVIC pending の両方
-    EXTI->INTFR = (1 << PIN_TH);
-    NVIC->IPRR[EXTI7_0_IRQn / 32] = (1 << (EXTI7_0_IRQn % 32));
 }
 
 // ---------------------------------------------------------------------------
@@ -268,14 +370,18 @@ void joystick_set_mode(uint8_t mode) {
 
     if (mode == PAD_MODE_MD6) {
         md6_rebuild_lut();
-        exti_init();
+        md6_dma_setup();   // TIM2 input capture + DMA 起動
+        // exti_init() は呼ばない (DMA だけで処理)
         // 初期出力: 現在の TH 状態に応じて step 0 または 1
         uint8_t th_high = (GPIOA->INDR >> PIN_TH) & 1;
         GPIOA->BSHR = md6_lut[th_high & 1];
     } else {
-        // EXTI 無効化
+        // DMA + TIM2 + EXTI 無効化
+        md6_dma_disable();
         EXTI->INTENR &= ~(1 << PIN_TH);
         NVIC_DisableIRQ(EXTI7_0_IRQn);
+        // PA0 を入力に戻す (元の COMMON 入力として)
+        gpio_init_th_input();
         atari_update_gpio();
     }
 }
