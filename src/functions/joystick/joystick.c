@@ -417,3 +417,64 @@ void joystick_poll(void) {
     // ATARI モード: 特に何もしない (set_button_by_note で即座に更新済み)
     // MD6 モード: 割り込みハンドラが処理するので何もしない
 }
+
+// ---------------------------------------------------------------------------
+// hid_function 互換 vtable
+// ---------------------------------------------------------------------------
+
+#define MIDI_CH_JOYSTICK 0
+#define CONFIG_PAD_MODE  0x03
+
+static void joystick_fn_init(void) {
+    joystick_init();
+    // デフォルトは ATARI モード
+    joystick_set_mode(PAD_MODE_ATARI);
+}
+
+static void joystick_fn_release_all(void) {
+    joystick_release_all();
+}
+
+static void joystick_fn_on_note_on(uint8_t note, uint8_t velocity) {
+    (void)velocity;
+    joystick_set_button_by_note(note, 1);
+}
+
+static void joystick_fn_on_note_off(uint8_t note) {
+    joystick_set_button_by_note(note, 0);
+}
+
+static void joystick_fn_on_set_config(uint8_t key, const uint8_t* val, int len) {
+    if (key == CONFIG_PAD_MODE && len >= 1) {
+        joystick_set_mode(val[0]);
+    }
+}
+
+static void joystick_fn_poll(void) {
+    joystick_poll();
+}
+
+static int joystick_fn_append_capabilities(uint8_t* buf, int max_len) {
+    int n = 0;
+    // CAP_BUTTON_COUNT (0x01) = 12
+    if (n + 3 > max_len) return n;
+    buf[n++] = 0x01;
+    buf[n++] = 1;
+    buf[n++] = 12;
+    return n;
+}
+
+const hid_function_t joystick_function = {
+    .name              = "joystick",
+    .hid_type          = HID_TYPE_JOYSTICK,
+    .target_system     = TARGET_ATARI,
+    .midi_channel      = MIDI_CH_JOYSTICK,
+    .init              = joystick_fn_init,
+    .release_all       = joystick_fn_release_all,
+    .on_note_on        = joystick_fn_on_note_on,
+    .on_note_off       = joystick_fn_on_note_off,
+    .on_cc             = NULL,
+    .on_set_config     = joystick_fn_on_set_config,
+    .poll              = joystick_fn_poll,
+    .append_capabilities = joystick_fn_append_capabilities,
+};

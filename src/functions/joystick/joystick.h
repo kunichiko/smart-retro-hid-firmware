@@ -55,4 +55,8 @@ void joystick_release_all(void);
 // ATARI モード: GPIO を直接更新 (メインループから呼ぶ)
 void joystick_poll(void);
 
+// hid_function 互換 vtable
+#include "../../hid_function.h"
+extern const hid_function_t joystick_function;
+
 #endif

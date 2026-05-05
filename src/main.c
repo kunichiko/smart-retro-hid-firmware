@@ -1,15 +1,19 @@
 // ===================================================================================
-// Project:  smart-retro-hid-firmware
+// Project:  Mimic X (smart-retro-hid-firmware)
 // Author:   Kunihiko Ohnaka (@kunichiko)
 // Year:     2026
 // URL:      https://github.com/kunichiko/smart-retro-hid-firmware
 // ===================================================================================
 //
 // USB-MIDI 経由でスマートフォンから制御コマンドを受信し、
-// レトロ PC の HID デバイス（キーボード・ジョイスティック等）を模倣する。
+// レトロ PC の HID デバイス（キーボード・ジョイスティック・マウス等）を模倣する。
+//
+// 本ファイルはコア処理のみ。各 HID 機能は functions/<name>/ 配下のモジュールが
+// hid_function_t を export し、board_config.h で有効化したものが
+// hid_dispatcher 経由で呼び出される。
 //
 // プロトコル仕様: https://github.com/kunichiko/smart-retro-hid-protocol
-//
+// ===================================================================================
 
 #include <stdio.h>
 #include <string.h>
@@ -17,10 +21,11 @@
 #include "ch32fun.h"
 #include "funconfig.h"
 #include "usb_midi.h"
-#include "joystick.h"
+#include "hid_dispatcher.h"
+#include "board_config.h"
 
 // ---------------------------------------------------------------------------
-// プロトコル定数 (smart-retro-hid-protocol v0.1.0)
+// プロトコル定数 (smart-retro-hid-protocol v0.3.0)
 // ---------------------------------------------------------------------------
 
 #define PROTOCOL_VERSION_MAJOR  0
@@ -29,10 +34,7 @@
 #define FW_VERSION_MINOR  3
 #define FW_VERSION_PATCH  0
 
-// MIDI チャンネル
-#define MIDI_CH_JOYSTICK  0
-#define MIDI_CH_KEYBOARD  1
-#define MIDI_CH_LED       14
+// MIDI チャンネル (デバイス→ホスト 通知用)
 #define MIDI_CH_STATUS    15
 
 // SysEx コマンド
@@ -45,33 +47,10 @@
 #define CMD_SET_CONFIG    0x10
 #define CMD_RESET         0x7F
 
-// チャンネル割り当て (デバイスごとに異なる、ビルド時固定)
-// このボードは ATARI ジョイスティック専用 (Ch0)
-#define HID_TYPE_KEYBOARD  0x01
-#define HID_TYPE_JOYSTICK  0x02
-#define HID_TYPE_MOUSE     0x03
-
-#define TARGET_GENERIC  0x00
-#define TARGET_ATARI    0x01
-#define TARGET_X68000   0x02
-#define TARGET_MD       0x40
-
-static const uint8_t channel_map[] = {
-    // ch, type, target
-    0, HID_TYPE_JOYSTICK, TARGET_ATARI,
-};
-#define NUM_CHANNELS  (sizeof(channel_map) / 3)
-
-static const char DEVICE_NAME[] = "mimic-x-joy";
-
-// SET_CONFIG キー
-#define CONFIG_PAD_MODE   0x03
-
-// Capability Types
-#define CAP_BUTTON_COUNT  0x01
-#define CAP_BIDI          0x20
-
+// ---------------------------------------------------------------------------
 // デバッグ LED (PB3, PB4)
+// ---------------------------------------------------------------------------
+
 #define DEBUG_LED0_PIN  3
 #define DEBUG_LED1_PIN  4
 
@@ -89,31 +68,6 @@ static void debug_led_set(uint8_t led, uint8_t on) {
     if (led > 1) return;
     if (on) GPIOB->BCR = (1 << pin);
     else    GPIOB->BSHR = (1 << pin);
-}
-
-// ---------------------------------------------------------------------------
-// X68000 キーボード制御
-// ---------------------------------------------------------------------------
-
-static void uart_init_x68k_keyboard(void) {
-    RCC->APB2PCENR |= RCC_USART1EN;
-    GPIOC->CFGLR &= ~(0xf << (4 * 1));
-    GPIOC->CFGLR |= (GPIO_Speed_50MHz | GPIO_CNF_OUT_PP_AF) << (4 * 1);
-    GPIOC->CFGLR &= ~(0xf << (4 * 0));
-    GPIOC->CFGLR |= (GPIO_Speed_In | GPIO_CNF_IN_FLOATING) << (4 * 0);
-    USART1->BRR = F_CPU / 2400;
-    USART1->CTLR1 = USART_CTLR1_TE | USART_CTLR1_RE;
-    USART1->CTLR1 |= USART_CTLR1_UE;
-}
-
-static void x68k_keyboard_send(uint8_t keycode) {
-    while (!(USART1->STATR & USART_STATR_TXE));
-    USART1->DATAR = keycode;
-}
-
-static int x68k_keyboard_receive(void) {
-    if (USART1->STATR & USART_STATR_RXNE) return (uint8_t)USART1->DATAR;
-    return -1;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,30 +92,25 @@ static void send_identify_response(void) {
     rsp[i++] = FW_VERSION_MAJOR;
     rsp[i++] = FW_VERSION_MINOR;
     rsp[i++] = FW_VERSION_PATCH;
-    rsp[i++] = NUM_CHANNELS;
-    for (int j = 0; j < (int)sizeof(channel_map) && i < (int)sizeof(rsp) - 2; j++)
-        rsp[i++] = channel_map[j] & 0x7F;
-    for (int j = 0; DEVICE_NAME[j] && i < (int)sizeof(rsp) - 1; j++)
-        rsp[i++] = DEVICE_NAME[j] & 0x7F;
+    // チャンネルマップ: <num_channels> <ch_0> <type_0> <target_0> ...
+    i += hid_dispatch_build_channel_map(rsp + i, sizeof(rsp) - i - 1);
+    // ボード名 (BOARD_NAME)
+    static const char board_name[] = BOARD_NAME;
+    for (int j = 0; board_name[j] && i < (int)sizeof(rsp) - 1; j++) {
+        rsp[i++] = board_name[j] & 0x7F;
+    }
     rsp[i++] = 0xF7;
     usb_midi_send_sysex(rsp, i);
 }
 
 static void send_capability_response(void) {
-    uint8_t rsp[32];
+    uint8_t rsp[64];
     int i = 0;
     rsp[i++] = 0xF0;
     rsp[i++] = SYSEX_MFR_ID;
     rsp[i++] = SYSEX_SUB_ID;
     rsp[i++] = CMD_CAPABILITY_RSP;
-    // ボタン数
-    rsp[i++] = CAP_BUTTON_COUNT;
-    rsp[i++] = 1;
-    rsp[i++] = 12;  // Up,Down,Left,Right,A,B,C,Start,X,Y,Z,Mode
-    // 双方向通信対応
-    rsp[i++] = CAP_BIDI;
-    rsp[i++] = 1;
-    rsp[i++] = 1;
+    i += hid_dispatch_build_capabilities(rsp + i, sizeof(rsp) - i - 1);
     rsp[i++] = 0xF7;
     usb_midi_send_sysex(rsp, i);
 }
@@ -180,15 +129,16 @@ static void process_sysex(const uint8_t* data, int len) {
         send_capability_response();
         break;
     case CMD_SET_CONFIG:
-        // F0 7D 01 10 <key> <value> F7 = 7 bytes minimum
-        if (len >= 7 && data[4] == CONFIG_PAD_MODE) {
-            joystick_set_mode(data[5]);
-            // モード変更を LED で表示
-            debug_led_set(0, data[5] == PAD_MODE_MD6);
+        if (len >= 6) {
+            // F0 7D 01 10 <key> <value...> F7
+            uint8_t key = data[4];
+            const uint8_t* val = data + 5;
+            int val_len = len - 6;  // F7 を除く
+            hid_dispatch_set_config(key, val, val_len);
         }
         break;
     case CMD_RESET:
-        joystick_release_all();
+        hid_dispatch_release_all();
         break;
     }
 }
@@ -236,26 +186,27 @@ static void process_midi_event(uint8_t cin, uint8_t midi0, uint8_t midi1, uint8_
         return;
     }
 
-    // 通常の MIDI メッセージ処理
+    // 通常の MIDI メッセージ処理 → dispatcher に委譲
     switch (cin) {
     case CIN_NOTE_ON:
-        if (channel == MIDI_CH_JOYSTICK) {
-            joystick_set_button_by_note(midi1, 1);
-        } else if (channel == MIDI_CH_KEYBOARD) {
-            x68k_keyboard_send(midi1 & 0x7F);
-        } else if (channel == MIDI_CH_STATUS) {
+        if (channel == MIDI_CH_STATUS) {
+            // デバッグ用: ステータスチャンネルの Note → LED
             debug_led_set(midi1, 1);
+        } else {
+            hid_dispatch_note_on(channel, midi1, midi2);
         }
         break;
 
     case CIN_NOTE_OFF:
-        if (channel == MIDI_CH_JOYSTICK) {
-            joystick_set_button_by_note(midi1, 0);
-        } else if (channel == MIDI_CH_KEYBOARD) {
-            x68k_keyboard_send(0x80 | (midi1 & 0x7F));
-        } else if (channel == MIDI_CH_STATUS) {
+        if (channel == MIDI_CH_STATUS) {
             debug_led_set(midi1, 0);
+        } else {
+            hid_dispatch_note_off(channel, midi1);
         }
+        break;
+
+    case CIN_CONTROL_CHANGE:
+        hid_dispatch_cc(channel, midi1, midi2);
         break;
 
     default:
@@ -276,40 +227,19 @@ int main() {
 
     // 初期化
     gpio_init_debug_leds();
-    joystick_init();
-    uart_init_x68k_keyboard();
+    hid_dispatch_init();
     usb_midi_init();
 
     uint8_t cin, midi0, midi1, midi2;
 
-    // クロック確認用: PB3 を Delay_Ms(500) ベースで点滅。1Hz になるはず
-    uint32_t blink_counter = 0;
-    uint32_t last_systick = 0;
-
     while (1) {
-        // SysTick で 500ms 経過を検出 (HCLK = 48MHz なので 24,000,000 カウントで 500ms)
-        uint32_t now = SysTick->CNT;
-        if ((uint32_t)(now - last_systick) >= 24000000) {
-            last_systick = now;
-            blink_counter ^= 1;
-            debug_led_set(0, blink_counter);
-        }
         // USB-MIDI からコマンド受信・処理
         while (usb_midi_receive_event(&cin, &midi0, &midi1, &midi2) > 0) {
             process_midi_event(cin, midi0, midi1, midi2);
         }
 
-        // ジョイスティックポーリング
-        joystick_poll();
-
-        // X68000 本体からの LED コマンド受信 → ホストに通知
-        int led_cmd = x68k_keyboard_receive();
-        if (led_cmd >= 0) {
-            for (int i = 0; i < 7; i++) {
-                uint8_t on = (led_cmd >> i) & 1;
-                usb_midi_control_change(MIDI_CH_LED, i, on ? 127 : 0);
-            }
-        }
+        // 各 HID 機能の poll
+        hid_dispatch_poll();
 
         // USB-MIDI TX バッファをフラッシュ
         usb_midi_poll();
