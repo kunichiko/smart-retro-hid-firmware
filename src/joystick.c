@@ -5,6 +5,9 @@
 // MD 6B mode:  TH (PA0) edge interrupt driven, 8-step cycle with 1.8ms timeout
 // ===================================================================================
 
+// MD 6B の TH エッジ応答性を高めるため、このファイルだけ O3 で最適化
+#pragma GCC optimize ("O3")
+
 #include "joystick.h"
 #include "ch32fun.h"
 #include "funconfig.h"
@@ -70,10 +73,28 @@ static inline void set_d0_d5(uint8_t d0, uint8_t d1, uint8_t d2, uint8_t d3, uin
 }
 
 // ---------------------------------------------------------------------------
-// MD 6B: TH エッジ割り込みで呼ばれる出力処理
+// MD 6B: 事前計算ルックアップテーブル
 // ---------------------------------------------------------------------------
+// インデックス 0..7 = step 1..8 (TH の各エッジに対応)
+// step 0 = TH=LOW (Step 1)
+// step 1 = TH=HIGH (Step 2)
+// step 2 = TH=LOW (Step 3)
+// step 3 = TH=HIGH (Step 4)
+// step 4 = TH=LOW (Step 5, 6B 識別)
+// step 5 = TH=HIGH (Step 6, 拡張ボタン)
+// step 6 = TH=LOW (Step 7, 確認)
+// step 7 = TH=HIGH (Step 8)
+//
+// 値は BSHR への単一 32bit 書き込み:
+//   下位 16bit: BSx (Hi-Z にするピン) — オープンドレイン出力で High = Hi-Z
+//   上位 16bit: BCx (Low にするピン)
+static volatile uint32_t md6_lut[8];
 
-static void md6_output_for_cycle(uint8_t cycle, uint8_t th_high) {
+#define D_PINS_MASK ((1<<PIN_D0)|(1<<PIN_D1)|(1<<PIN_D2)|(1<<PIN_D3)|(1<<PIN_D4)|(1<<PIN_D5))
+
+// btn_state を元に LUT を再計算する
+// active=1 のビットを BCR (Low)、active=0 を BSHR (Hi-Z) に振り分ける
+static void md6_rebuild_lut(void) {
     uint8_t up    = btn_state[BTN_UP];
     uint8_t down  = btn_state[BTN_DOWN];
     uint8_t left  = btn_state[BTN_LEFT];
@@ -87,37 +108,39 @@ static void md6_output_for_cycle(uint8_t cycle, uint8_t th_high) {
     uint8_t z     = btn_state[BTN_Z];
     uint8_t mode  = btn_state[BTN_MODE];
 
-    if (th_high) {
-        // TH = HIGH
-        switch (cycle) {
-        case 0: // Step 2
-        case 1: // Step 4
-        case 3: // Step 8
-            // D0=Up, D1=Down, D2=Left, D3=Right, D4=B, D5=C
-            set_d0_d5(up, down, left, right, b, c);
-            break;
-        case 2: // Step 6: 拡張ボタン
-            // D0=Z, D1=Y, D2=X, D3=Mode, D4=1(Hi-Z), D5=1(Hi-Z)
-            set_d0_d5(z, y, x, mode, 0, 0);
-            break;
+    // d0..d5 各ピンの active 値を 8 ステップ分定義
+    // step[i][0..5] = D0..D5 の active 値 (1=Low, 0=Hi-Z)
+    static const uint8_t pins[6] = {PIN_D0, PIN_D1, PIN_D2, PIN_D3, PIN_D4, PIN_D5};
+
+    // ステップごとの値テーブルを構築
+    uint8_t step_vals[8][6] = {
+        // Step 1 (cycle 0, LOW): Up, Down, 0, 0, A, Start  ※D2/D3 は固定 Low (=1)
+        { up, down, 1, 1, a, start },
+        // Step 2 (cycle 0, HIGH): Up, Down, Left, Right, B, C
+        { up, down, left, right, b, c },
+        // Step 3 (cycle 1, LOW)
+        { up, down, 1, 1, a, start },
+        // Step 4 (cycle 1, HIGH)
+        { up, down, left, right, b, c },
+        // Step 5 (cycle 2, LOW): D0-D3 全 Low (=1) = 6B 識別
+        { 1, 1, 1, 1, a, start },
+        // Step 6 (cycle 2, HIGH): Z, Y, X, Mode, 1(Hi-Z), 1(Hi-Z)
+        { z, y, x, mode, 0, 0 },
+        // Step 7 (cycle 3, LOW): D0-D3 全 Hi-Z (=0) = 確認
+        { 0, 0, 0, 0, a, start },
+        // Step 8 (cycle 3, HIGH): 通常状態に復帰
+        { up, down, left, right, b, c },
+    };
+
+    // BSHR (= BSRR) フォーマット: 上位16bit = Low にするピン, 下位16bit = High (Hi-Z) にするピン
+    for (int s = 0; s < 8; s++) {
+        uint32_t set = 0, reset = 0;
+        for (int p = 0; p < 6; p++) {
+            uint32_t bit = 1u << pins[p];
+            if (step_vals[s][p]) reset |= bit;  // active = Low
+            else                 set   |= bit;  // inactive = Hi-Z (Pull-up で High)
         }
-    } else {
-        // TH = LOW
-        switch (cycle) {
-        case 0: // Step 1
-        case 1: // Step 3
-            // D0=Up, D1=Down, D2=0(Low), D3=0(Low), D4=A, D5=Start
-            set_d0_d5(up, down, 1, 1, a, start);
-            break;
-        case 2: // Step 5: 6B 識別 (D0-D3 全て Low)
-            // D0=0, D1=0, D2=0, D3=0, D4=A, D5=Start
-            set_d0_d5(1, 1, 1, 1, a, start);
-            break;
-        case 3: // Step 7: 確認 (D0-D3 全て High)
-            // D0=1, D1=1, D2=1, D3=1, D4=A, D5=Start
-            set_d0_d5(0, 0, 0, 0, a, start);
-            break;
-        }
+        md6_lut[s] = set | (reset << 16);
     }
 }
 
@@ -138,68 +161,75 @@ static void atari_update_gpio(void) {
 // TH 割り込みハンドラ (EXTI line 0, PA0)
 // ---------------------------------------------------------------------------
 
-void EXTI7_0_IRQHandler(void) __attribute__((interrupt));
+// 最初の TH エッジで割り込み発生 → そのまま ISR 内でポーリングで全ステップ処理
+// ポインタをローカル const に置いてループ外でレジスタ確保することで内ループの命令数を減らす
+
+// 戻り値: 1=エッジ検出, 0=タイムアウト
+static inline __attribute__((always_inline))
+int wait_th_state(volatile uint32_t* indr, uint32_t mask, uint32_t target, uint32_t timeout) {
+    uint32_t v;
+    do {
+        v = (*indr) & mask;
+        if ((target ? v : !v)) return 1;
+    } while (--timeout);
+    return 0;
+}
+
+void EXTI7_0_IRQHandler(void) __attribute__((interrupt, optimize("O3")));
 void EXTI7_0_IRQHandler(void) {
-    if (EXTI->INTFR & (1 << PIN_TH)) {
-        EXTI->INTFR = (1 << PIN_TH);  // フラグクリア
+    EXTI->INTFR = (1 << PIN_TH);
 
-        if (pad_mode != PAD_MODE_MD6) return;
+    volatile uint32_t* const indr_p = &GPIOA->INDR;
+    volatile uint32_t* const bshr_p = &GPIOA->BSHR;
+    const uint32_t mask = (1 << PIN_TH);
+    const uint32_t timeout = 1000;
 
-        uint8_t th_high = (GPIOA->INDR >> PIN_TH) & 1;
+    // 最初のエッジ (TH=LOW = Step 1): すぐ出力
+    *bshr_p = md6_lut[0];
 
-        // TH の立ち上がりでサイクルを進める
-        if (th_high) {
-            // サイクル内の HIGH フェーズ
-            md6_output_for_cycle(th_cycle, 1);
-        } else {
-            // サイクルの LOW フェーズ → 次のサイクルに進む（最初の LOW は cycle 0）
-            if (th_cycle < 3) {
-                // 立ち下がりでは cycle は進めない (HIGH→LOW が1ステップ)
-            }
-            md6_output_for_cycle(th_cycle, 0);
-        }
+    if (!wait_th_state(indr_p, mask, 1, timeout)) goto done;
+    *bshr_p = md6_lut[1];
+    if (!wait_th_state(indr_p, mask, 0, timeout)) goto done;
+    *bshr_p = md6_lut[2];
+    if (!wait_th_state(indr_p, mask, 1, timeout)) goto done;
+    *bshr_p = md6_lut[3];
+    if (!wait_th_state(indr_p, mask, 0, timeout)) goto done;
+    *bshr_p = md6_lut[4];
+    if (!wait_th_state(indr_p, mask, 1, timeout)) goto done;
+    *bshr_p = md6_lut[5];
+    if (!wait_th_state(indr_p, mask, 0, timeout)) goto done;
+    *bshr_p = md6_lut[6];
+    if (!wait_th_state(indr_p, mask, 1, timeout)) goto done;
+    *bshr_p = md6_lut[7];
 
-        // TH の立ち上がりでサイクルカウンタを進める
-        if (th_high && th_cycle < 3) {
-            th_cycle++;
-        }
+done:
+    // アイドル時 (TH=HIGH) の Step 2 状態に戻す
+    *bshr_p = md6_lut[1];
 
-        // タイマーリセット (1.8ms タイムアウト)
-        TIM2->CNT = 0;
-        TIM2->CTLR1 |= TIM_CEN;  // タイマー開始/再開
-    }
+    // ポーリング中に発生した falling edge による pending を全クリア
+    // EXTI フラグ (W1C) と NVIC pending の両方
+    EXTI->INTFR = (1 << PIN_TH);
+    NVIC->IPRR[EXTI7_0_IRQn / 32] = (1 << (EXTI7_0_IRQn % 32));
 }
 
 // ---------------------------------------------------------------------------
 // TIM2 タイムアウト割り込み (1.8ms でサイクルカウンタリセット)
 // ---------------------------------------------------------------------------
 
-void TIM2_IRQHandler(void) __attribute__((interrupt));
-void TIM2_IRQHandler(void) {
-    if (TIM2->INTFR & TIM_UIF) {
-        TIM2->INTFR = ~TIM_UIF;  // フラグクリア
-        TIM2->CTLR1 &= ~TIM_CEN;  // タイマー停止
-        th_cycle = 0;
-
-        // タイムアウト後は TH=HIGH のデフォルト状態を出力
-        if (pad_mode == PAD_MODE_MD6) {
-            md6_output_for_cycle(0, 1);
-        }
-    }
-}
+// (TIM2 タイマー割り込みは ISR 内ポーリング方式では不要)
 
 // ---------------------------------------------------------------------------
 // 初期化
 // ---------------------------------------------------------------------------
 
 static void gpio_init_output_pins(void) {
-    // D0-D5 をオープンドレイン出力
+    // D0-D5 をオープンドレイン出力 (3.3V/5V 共用、レトロ PC のプルアップ前提)
     const uint8_t out_pins[] = { PIN_D0, PIN_D1, PIN_D2, PIN_D3, PIN_D4, PIN_D5 };
     for (int i = 0; i < (int)(sizeof(out_pins) / sizeof(out_pins[0])); i++) {
         uint8_t p = out_pins[i];
         GPIOA->CFGLR &= ~(0xf << (4 * p));
         GPIOA->CFGLR |= (GPIO_Speed_50MHz | GPIO_CNF_OUT_OD) << (4 * p);
-        GPIOA->BSHR = (1 << p);  // Hi-Z
+        GPIOA->BSHR = (1 << p);  // Hi-Z (非アクティブ)
     }
 }
 
@@ -214,26 +244,13 @@ static void exti_init(void) {
     // PA0 を EXTI0 に接続 (PA = 0)
     AFIO->EXTICR1 = (AFIO->EXTICR1 & ~(0x0F << (4 * PIN_TH))) | (0x00 << (4 * PIN_TH));
 
-    // 両エッジで割り込み
+    // 立ち下がりエッジのみで割り込み (最初の TH=LOW を捕捉)
+    // 残りの 7 ステップは ISR 内のポーリングで処理する
     EXTI->INTENR |= (1 << PIN_TH);
-    EXTI->RTENR |= (1 << PIN_TH);   // 立ち上がり
-    EXTI->FTENR |= (1 << PIN_TH);   // 立ち下がり
+    EXTI->RTENR &= ~(1 << PIN_TH);
+    EXTI->FTENR |= (1 << PIN_TH);
 
     NVIC_EnableIRQ(EXTI7_0_IRQn);
-}
-
-static void timer_init(void) {
-    // TIM2: 1.8ms ワンショットタイマー
-    RCC->APB1PCENR |= RCC_TIM2EN;
-
-    TIM2->CTLR1 = 0;
-    TIM2->PSC = 48 - 1;          // 48MHz / 48 = 1MHz (1us per tick)
-    TIM2->ATRLR = 1800 - 1;      // 1800us = 1.8ms
-    TIM2->CTLR1 |= TIM_OPM;     // ワンショットモード
-    TIM2->DMAINTENR |= TIM_UIE;  // 更新割り込み有効
-    TIM2->INTFR = 0;             // フラグクリア
-
-    NVIC_EnableIRQ(TIM2_IRQn);
 }
 
 void joystick_init(void) {
@@ -242,8 +259,6 @@ void joystick_init(void) {
 
     gpio_init_output_pins();
     gpio_init_th_input();
-    timer_init();
-    // EXTI は MD6 モードに切り替えたときに有効化
 }
 
 void joystick_set_mode(uint8_t mode) {
@@ -252,14 +267,15 @@ void joystick_set_mode(uint8_t mode) {
     th_cycle = 0;
 
     if (mode == PAD_MODE_MD6) {
+        md6_rebuild_lut();
         exti_init();
-        // デフォルト: TH=HIGH の出力
-        md6_output_for_cycle(0, 1);
+        // 初期出力: 現在の TH 状態に応じて step 0 または 1
+        uint8_t th_high = (GPIOA->INDR >> PIN_TH) & 1;
+        GPIOA->BSHR = md6_lut[th_high & 1];
     } else {
         // EXTI 無効化
         EXTI->INTENR &= ~(1 << PIN_TH);
         NVIC_DisableIRQ(EXTI7_0_IRQn);
-        // ATARI モード: GPIO 直接出力
         atari_update_gpio();
     }
 }
@@ -269,16 +285,19 @@ uint8_t joystick_get_mode(void) {
 }
 
 void joystick_set_button_by_note(uint8_t note, uint8_t pressed) {
-    int idx = note_to_btn(note);
-    if (idx < 0) return;
-    btn_state[idx] = pressed ? 1 : 0;
+    int btn_idx = note_to_btn(note);
+    if (btn_idx < 0) return;
+    btn_state[btn_idx] = pressed ? 1 : 0;
 
-    // ATARI モードでは即座に GPIO 更新
     if (pad_mode == PAD_MODE_ATARI) {
         atari_update_gpio();
+    } else if (pad_mode == PAD_MODE_MD6) {
+        // LUT 再構築 (ボタン状態が変わったため)
+        md6_rebuild_lut();
+        // 現在の TH 状態に応じて即座に出力 (cycle=0 として)
+        uint8_t th_high = (GPIOA->INDR >> PIN_TH) & 1;
+        GPIOA->BSHR = md6_lut[th_high & 1];
     }
-    // MD6 モードでは割り込みハンドラが TH エッジ時に出力するので、
-    // ここでは btn_state を更新するだけで良い
 }
 
 void joystick_release_all(void) {

@@ -268,7 +268,18 @@ int main() {
 
     uint8_t cin, midi0, midi1, midi2;
 
+    // クロック確認用: PB3 を Delay_Ms(500) ベースで点滅。1Hz になるはず
+    uint32_t blink_counter = 0;
+    uint32_t last_systick = 0;
+
     while (1) {
+        // SysTick で 500ms 経過を検出 (HCLK = 48MHz なので 24,000,000 カウントで 500ms)
+        uint32_t now = SysTick->CNT;
+        if ((uint32_t)(now - last_systick) >= 24000000) {
+            last_systick = now;
+            blink_counter ^= 1;
+            debug_led_set(0, blink_counter);
+        }
         // USB-MIDI からコマンド受信・処理
         while (usb_midi_receive_event(&cin, &midi0, &midi1, &midi2) > 0) {
             process_midi_event(cin, midi0, midi1, midi2);
