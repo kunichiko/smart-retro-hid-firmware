@@ -24,9 +24,9 @@
 // ---------------------------------------------------------------------------
 
 #define PROTOCOL_VERSION_MAJOR  0
-#define PROTOCOL_VERSION_MINOR  1
+#define PROTOCOL_VERSION_MINOR  3
 #define FW_VERSION_MAJOR  0
-#define FW_VERSION_MINOR  2
+#define FW_VERSION_MINOR  3
 #define FW_VERSION_PATCH  0
 
 // MIDI チャンネル
@@ -45,11 +45,24 @@
 #define CMD_SET_CONFIG    0x10
 #define CMD_RESET         0x7F
 
-// デバイスタイプ・ターゲットシステム
-#define DEVICE_TYPE       0x02  // Joystick / Gamepad
-#define TARGET_SYSTEM     0x01  // ATARI
+// チャンネル割り当て (デバイスごとに異なる、ビルド時固定)
+// このボードは ATARI ジョイスティック専用 (Ch0)
+#define HID_TYPE_KEYBOARD  0x01
+#define HID_TYPE_JOYSTICK  0x02
+#define HID_TYPE_MOUSE     0x03
 
-static const char DEVICE_NAME[] = "smart-retro-hid-joy";
+#define TARGET_GENERIC  0x00
+#define TARGET_ATARI    0x01
+#define TARGET_X68000   0x02
+#define TARGET_MD       0x40
+
+static const uint8_t channel_map[] = {
+    // ch, type, target
+    0, HID_TYPE_JOYSTICK, TARGET_ATARI,
+};
+#define NUM_CHANNELS  (sizeof(channel_map) / 3)
+
+static const char DEVICE_NAME[] = "mimic-x-joy";
 
 // SET_CONFIG キー
 #define CONFIG_PAD_MODE   0x03
@@ -114,7 +127,7 @@ static uint8_t sysex_receiving;
 static void sysex_reset(void) { sysex_len = 0; sysex_receiving = 0; }
 
 static void send_identify_response(void) {
-    uint8_t rsp[32];
+    uint8_t rsp[64];
     int i = 0;
     rsp[i++] = 0xF0;
     rsp[i++] = SYSEX_MFR_ID;
@@ -122,12 +135,13 @@ static void send_identify_response(void) {
     rsp[i++] = CMD_IDENTIFY_RSP;
     rsp[i++] = PROTOCOL_VERSION_MAJOR;
     rsp[i++] = PROTOCOL_VERSION_MINOR;
-    rsp[i++] = DEVICE_TYPE;
-    rsp[i++] = TARGET_SYSTEM;
     rsp[i++] = FW_VERSION_MAJOR;
     rsp[i++] = FW_VERSION_MINOR;
     rsp[i++] = FW_VERSION_PATCH;
-    for (int j = 0; DEVICE_NAME[j] && i < 30; j++)
+    rsp[i++] = NUM_CHANNELS;
+    for (int j = 0; j < (int)sizeof(channel_map) && i < (int)sizeof(rsp) - 2; j++)
+        rsp[i++] = channel_map[j] & 0x7F;
+    for (int j = 0; DEVICE_NAME[j] && i < (int)sizeof(rsp) - 1; j++)
         rsp[i++] = DEVICE_NAME[j] & 0x7F;
     rsp[i++] = 0xF7;
     usb_midi_send_sysex(rsp, i);
