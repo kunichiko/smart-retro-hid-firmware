@@ -26,18 +26,18 @@
 // MimicX-hardware/atari-joystick の atari_joystick.ato と同期
 // PA0: TH/COMMON (入力: コンソールからの SELECT 信号、D-SUB pin 8)
 // PA7: D0 (Up,     D-SUB pin 1)
-// PA4: D1 (Down,   D-SUB pin 2)
-// PA2: D2 (Left,   D-SUB pin 3)
-// PA1: D3 (Right,  D-SUB pin 4)
+// PA5: D1 (Down,   D-SUB pin 2)
+// PA3: D2 (Left,   D-SUB pin 3)
+// PA2: D3 (Right,  D-SUB pin 4)
 // PA6: D4 (TRIG-A, D-SUB pin 6 — MD: Button A / B)
-// PA3: D5 (TRIG-B, D-SUB pin 7 — MD: Button B / C)
+// PA4: D5 (TRIG-B, D-SUB pin 7 — MD: Button B / C)
 #define PIN_TH      0
 #define PIN_D0      7
-#define PIN_D1      4
-#define PIN_D2      2
-#define PIN_D3      1
+#define PIN_D1      5
+#define PIN_D2      3
+#define PIN_D3      2
 #define PIN_D4      6
-#define PIN_D5      3
+#define PIN_D5      4
 
 // 初期化
 void joystick_init(void);
