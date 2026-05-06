@@ -22,21 +22,22 @@
 #define BTN_MODE    11
 #define BTN_COUNT   12
 
-// GPIO ピン割り当て (ATARI D-SUB 9pin 配線済み)
-// PA0: TH/SELECT (入力: コンソールからの SELECT 信号)
-// PA1: D0 (Up)
-// PA2: D1 (Down)
-// PA3: D2 (Left)
-// PA4: D3 (Right)
-// PA6: D4 (TL / Button A or B)
-// PA7: D5 (TR / Button B or C)
+// GPIO ピン割り当て (ATARI / X68000 標準 D-SUB 9pin 配線済み)
+// MimicX-hardware/atari-joystick の atari_joystick.ato と同期
+// PA0: TH/COMMON (入力: コンソールからの SELECT 信号、D-SUB pin 8)
+// PA7: D0 (Up,     D-SUB pin 1)
+// PA4: D1 (Down,   D-SUB pin 2)
+// PA2: D2 (Left,   D-SUB pin 3)
+// PA1: D3 (Right,  D-SUB pin 4)
+// PA6: D4 (TRIG-A, D-SUB pin 6 — MD: Button A / B)
+// PA3: D5 (TRIG-B, D-SUB pin 7 — MD: Button B / C)
 #define PIN_TH      0
-#define PIN_D0      1
-#define PIN_D1      2
-#define PIN_D2      3
-#define PIN_D3      4
+#define PIN_D0      7
+#define PIN_D1      4
+#define PIN_D2      2
+#define PIN_D3      1
 #define PIN_D4      6
-#define PIN_D5      7
+#define PIN_D5      3
 
 // 初期化
 void joystick_init(void);
