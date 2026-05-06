@@ -11,6 +11,7 @@
 
 #include "funconfig.h"
 #include "ch32fun.h"
+#include "board_config.h"
 
 #define FUSB_CONFIG_EPS       3  // EP0 + EP1 + EP2
 // fsusb の mode: 1 = TX_EN (IN), -1 = RX_EN (OUT), 2 = 双方向 (TX+RX, AUTO_TOG)
@@ -36,8 +37,11 @@
 #define FUSB_USB_PID 0x0001
 #define FUSB_USB_REV 0x0100
 #define FUSB_STR_MANUFACTURER u"kunichiko"
-#define FUSB_STR_PRODUCT      u"Mimic X"
-#define FUSB_STR_SERIAL       u"001"
+// iProduct / iSerialNumber は variant ごとに board_config.h で定義する。
+// VID:PID:iSerial の組合せでホスト OS は個体を識別するため、variant を分けて
+// おかないと別ハードを挿しても古い iProduct がキャッシュ表示されてしまう。
+#define FUSB_STR_PRODUCT      BOARD_USB_PRODUCT
+#define FUSB_STR_SERIAL       BOARD_USB_SERIAL
 
 // ---------------------------------------------------------------------------
 // Device Descriptor

@@ -24,16 +24,14 @@ Core を導入してください (`pip install platformio` / `brew install platf
 | env | 用途 |
 |---|---|
 | `joystick` | ATARI / MD6 ジョイスティック (atari-joystick 基板) |
-| `x68k_keyboard` | X68000 キーボード単体 |
-| `x68k_full` | X68000 キーボード + マウス |
+| `x68k_keyboard` | X68000 キーボード基板 (本体側へキーボード + マウスポート対応) |
 | `joystick-debug` | デバッグビルド (-Og + WCH-LinkE GDB サーバ) |
 
 ### ビルド
 
 ```sh
 pio run -e joystick           # ATARI/MD6 ジョイスティック
-pio run -e x68k_keyboard      # X68000 キーボード単体
-pio run -e x68k_full          # X68000 キーボード + マウス
+pio run -e x68k_keyboard      # X68000 キーボード (キーボード + マウス)
 ```
 
 初回は Community-PIO-CH32V プラットフォーム / ch32v003fun フレームワーク /

@@ -182,8 +182,7 @@
         <select id="variant-select">
             <option value="" disabled selected>-- バリアントを選択 --</option>
             <option value="joystick">ジョイスティック (ATARI / メガドライブ 6 ボタン)</option>
-            <option value="x68k_keyboard">X68000 キーボード単体</option>
-            <option value="x68k_full">X68000 キーボード + マウス</option>
+            <option value="x68k_keyboard">X68000 キーボード (キーボード + マウス)</option>
         </select>
         <div class="variant-desc" id="variant-desc">
             ご使用の Mimic X 基板に合わせて選択してください。
@@ -225,15 +224,9 @@
                 ],
             },
             x68k_keyboard: {
-                desc: 'X68000 キーボードのみを模倣する基板向け (USART2: PA15/PA16, READY: PA17)。',
+                desc: 'X68000 キーボード基板向け (USART2: PA15/PA16, READY: PA17)。本体側へキーボード信号 + マウスポート通信 (USART3 PA18 MSDATA, MSCTRL 検出) を出す。',
                 releases: [
                     { version: 'v0.4.0', date: '2026-05-05', file: 'firmwares/mimicx_x68k_keyboard_v0.4.0.bin', note: '初回リリース' },
-                ],
-            },
-            x68k_full: {
-                desc: 'X68000 キーボード + マウスを模倣する基板向け (キーボード + USART3 PA18: MSDATA, MSCTRL 検出)。',
-                releases: [
-                    { version: 'v0.4.0', date: '2026-05-05', file: 'firmwares/mimicx_x68k_full_v0.4.0.bin', note: '初回リリース' },
                 ],
             },
         };
