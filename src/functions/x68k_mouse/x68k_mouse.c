@@ -12,11 +12,10 @@
 //       (https://kg68k.github.io/InsideX68000-errata/) で訂正されており、
 //       bit0=L, bit1=R が正しい。実機検証もこの方向で一致。
 //
-// ピン (CH32X035 C8T6):
-//   PA18: USART3_TX (MSDATA, AFIO PCFR1 USART3_REMAP = 10)
-//   PA19: MSCTRL モニタ出力 (デバッグ用、M ビットをそのまま出力 = 1:HIGH/0:LOW)
+// ピン (CH32X035 G8U6 / QFN28):
+//   PB9: USART4_TX (MSDATA, AFIO PCFR1 USART4_REMAP = 011 → TX4_3)
 //
-// 本体は KEY RxD (= USART2 RX = PA16) 経由で MSCTRL コマンド (0b01000xxM) を
+// 本体は KEY RxD (= USART1 RX = PB11) 経由で MSCTRL コマンド (0b01000xxM) を
 // 送る。M=1 でマウスデータ要求。検出はキーボードモジュール側で行い、
 // x68k_mouse_handle_msctrl() を呼んで本モジュールから 3 byte 送出する。
 // ===================================================================================
@@ -51,33 +50,29 @@ static volatile int16_t  s_accum_dy = 0;
 static volatile uint8_t  s_prev_m = 1;
 
 // ---------------------------------------------------------------------------
-// UART 駆動 (USART3 TX のみ)
+// UART 駆動 (USART4 TX のみ)
 // ---------------------------------------------------------------------------
 
 static void uart_init(void) {
-    RCC->APB1PCENR |= RCC_USART3EN;
+    RCC->APB1PCENR |= RCC_USART4EN;
 
-    // USART3 を PA18(TX) / PB14(RX) にリマップ (PCFR1 USART3_REMAP = 0b10)
-    AFIO->PCFR1 = (AFIO->PCFR1 & ~AFIO_PCFR1_USART3_REMAP) | AFIO_PCFR1_USART3_REMAP_1;
+    // USART4 を PB9 (TX) にリマップ (PCFR1 USART4_REMAP = 0b011 → TX4_3)
+    AFIO->PCFR1 = (AFIO->PCFR1 & ~AFIO_PCFR1_USART4_REMAP) |
+                  (AFIO_PCFR1_USART4_REMAP_0 | AFIO_PCFR1_USART4_REMAP_1);
 
-    // PA18 (TX): Push-Pull AF 出力, PA19: 汎用 Push-Pull 出力 (MSCTRL モニタ)
-    // CFGXR pin 18 = bits[11:8], pin 19 = bits[15:12]
-    GPIOA->CFGXR &= ~((0xf << (4 * (18 - 16))) | (0xf << (4 * (19 - 16))));
-    GPIOA->CFGXR |= (GPIO_Speed_50MHz | GPIO_CNF_OUT_PP_AF) << (4 * (18 - 16));
-    GPIOA->CFGXR |= (GPIO_Speed_50MHz | GPIO_CNF_OUT_PP)    << (4 * (19 - 16));
-
-    // PA19 デフォルト HIGH (MSCTRL アイドル, M=1 と同じ状態)
-    GPIOA->BSXR = GPIO_BSXR_BS19;
+    // PB9 (TX): Push-Pull AF 出力 — CFGHR bit field for pin 9
+    GPIOB->CFGHR &= ~(0xf << (4 * (9 - 8)));
+    GPIOB->CFGHR |= (GPIO_Speed_50MHz | GPIO_CNF_OUT_PP_AF) << (4 * (9 - 8));
 
     // 4800bps 8N2 (TX のみ使用、RX 不要)
-    USART3->BRR = F_CPU / 4800;
-    USART3->CTLR2 = USART_CTLR2_STOP_1;  // STOP[13:12] = 10 → 2 stop bits
-    USART3->CTLR1 = USART_CTLR1_TE | USART_CTLR1_UE;
+    USART4->BRR = F_CPU / 4800;
+    USART4->CTLR2 = USART_CTLR2_STOP_1;  // STOP[13:12] = 10 → 2 stop bits
+    USART4->CTLR1 = USART_CTLR1_TE | USART_CTLR1_UE;
 }
 
 static void uart_send(uint8_t byte) {
-    while (!(USART3->STATR & USART_STATR_TXE));
-    USART3->DATAR = byte;
+    while (!(USART4->STATR & USART_STATR_TXE));
+    USART4->DATAR = byte;
 }
 
 // ---------------------------------------------------------------------------
@@ -86,13 +81,6 @@ static void uart_send(uint8_t byte) {
 
 void x68k_mouse_handle_msctrl(uint8_t cmd) {
     const uint8_t m = cmd & 0x01;
-
-    // PA19 = M ビットそのまま (MSCTRL: M=1 HIGH アイドル / M=0 LOW 要求)
-    if (m) {
-        GPIOA->BSXR = GPIO_BSXR_BS19;
-    } else {
-        GPIOA->BSXR = GPIO_BSXR_BR19;
-    }
 
     // H→L エッジ検出: 前回 M=1 (HIGH) → 今回 M=0 (LOW) のときに送信を起動
     const uint8_t falling = (s_prev_m == 1) && (m == 0);

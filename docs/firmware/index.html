@@ -225,9 +225,10 @@
                 ],
             },
             x68k_keyboard: {
-                desc: 'X68000 キーボード基板向け (USART2: PA15/PA16, READY: PA17)。本体側へキーボード信号 + マウスポート通信 (USART3 PA18 MSDATA, MSCTRL 検出) を出す。',
+                desc: 'X68000 キーボード基板向け (CH32X035G8U6 / QFN28)。本体側へキーボード信号 (USART1: PB10/PB11, READY: PB12) + マウスポート通信 (USART4 PB9 = MSDATA) を出す。',
                 releases: [
-                    { version: 'v0.4.0', date: '2026-05-05', file: 'firmwares/mimicx_x68k_keyboard_v0.4.0.bin', note: '初回リリース' },
+                    { version: 'v0.5.2', date: '2026-05-09', file: 'firmwares/mimicx_x68k_keyboard_v0.5.2.bin', note: 'CH32X035G8U6 対応 (USART1=PB10/PB11, READY=PB12, USART4_TX=PB9)' },
+                    { version: 'v0.4.0', date: '2026-05-05', file: 'firmwares/mimicx_x68k_keyboard_v0.4.0.bin', note: '旧 C8T6 試作配線専用 (USART2=PA15/PA16, READY=PA17, USART3 PA18) — 新基板では選択しないこと' },
                 ],
             },
         };

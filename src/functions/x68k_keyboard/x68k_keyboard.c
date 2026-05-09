@@ -6,11 +6,11 @@
 //   キーボード→本体: 1 byte/key (bit7=1:break, 0:make / bit6-0:scancode)
 //   本体→キーボード: LED 制御 (bit7=1) / リピート設定 (0x60-0x7F) など
 //
-// ピン (CH32X035 C8T6 - PC0/PC1 が外に出ていないため USART2 リマップ):
-//   PA15: USART2_TX  (キーコード送信)
-//   PA16: USART2_RX  (本体→キーボードのコマンド受信)
-//   PA17: READY      (本体→キーボード, 1=ホスト準備完了, 0=送信抑止)
-//   AFIO->PCFR1 USART2_REMAP = 0b010
+// ピン (CH32X035 G8U6 / QFN28):
+//   PB10: USART1_TX  (キーコード送信、USART1 デフォルト = PB10/PB11)
+//   PB11: USART1_RX  (本体→キーボードのコマンド受信)
+//   PB12: READY      (本体→キーボード, 1=ホスト準備完了, 0=送信抑止)
+// USART1 はリマップ不要 (CH32X035 デフォルトで PB10/PB11)
 // ===================================================================================
 #include "x68k_keyboard.h"
 #include "ch32fun.h"
@@ -46,9 +46,9 @@ static inline void tx_queue_push(uint8_t byte) {
     tx_head = next;
 }
 
-// READY 信号 (PA17): 1=ホスト準備完了, 0=送信抑止
+// READY 信号 (PB12): 1=ホスト準備完了, 0=送信抑止
 static inline int host_ready(void) {
-    return (GPIOA->INDR & GPIO_INDR_IDR17) != 0;
+    return (GPIOB->INDR & (1 << 12)) != 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -56,39 +56,39 @@ static inline int host_ready(void) {
 // ---------------------------------------------------------------------------
 
 static void uart_init(void) {
-    RCC->APB1PCENR |= RCC_USART2EN;
+    // USART1 は APB2 ペリフェラル
+    RCC->APB2PCENR |= RCC_USART1EN;
 
-    // USART2 を PA15(TX) / PA16(RX) にリマップ (PCFR1 USART2_REMAP = 0b010)
-    AFIO->PCFR1 = (AFIO->PCFR1 & ~AFIO_PCFR1_USART2_REMAP) | AFIO_PCFR1_USART2_REMAP_1;
+    // USART1 はデフォルトで PB10(TX) / PB11(RX) なのでリマップ不要
 
-    // PA15 (TX): Push-Pull AF 出力 — CFGHR bit field for pin 15
-    GPIOA->CFGHR &= ~(0xf << (4 * (15 - 8)));
-    GPIOA->CFGHR |= (GPIO_Speed_50MHz | GPIO_CNF_OUT_PP_AF) << (4 * (15 - 8));
+    // PB10 (TX): Push-Pull AF 出力 — CFGHR bit field for pin 10
+    GPIOB->CFGHR &= ~(0xf << (4 * (10 - 8)));
+    GPIOB->CFGHR |= (GPIO_Speed_50MHz | GPIO_CNF_OUT_PP_AF) << (4 * (10 - 8));
 
-    // PA16 (RX): フローティング入力 — CFGXR bit field for pin 16
-    // PA17 (READY): フローティング入力 — CFGXR bit field for pin 17
-    GPIOA->CFGXR &= ~((0xf << (4 * (16 - 16))) | (0xf << (4 * (17 - 16))));
-    GPIOA->CFGXR |=  ((GPIO_Speed_In | GPIO_CNF_IN_FLOATING) << (4 * (16 - 16))) |
-                     ((GPIO_Speed_In | GPIO_CNF_IN_FLOATING) << (4 * (17 - 16)));
+    // PB11 (RX): フローティング入力 — CFGHR bit field for pin 11
+    // PB12 (READY): フローティング入力 — CFGHR bit field for pin 12
+    GPIOB->CFGHR &= ~((0xf << (4 * (11 - 8))) | (0xf << (4 * (12 - 8))));
+    GPIOB->CFGHR |=  ((GPIO_Speed_In | GPIO_CNF_IN_FLOATING) << (4 * (11 - 8))) |
+                     ((GPIO_Speed_In | GPIO_CNF_IN_FLOATING) << (4 * (12 - 8)));
 
     // 2400bps 8N1
-    USART2->BRR = F_CPU / 2400;
-    USART2->CTLR1 = USART_CTLR1_TE | USART_CTLR1_RE;
-    USART2->CTLR1 |= USART_CTLR1_UE;
+    USART1->BRR = F_CPU / 2400;
+    USART1->CTLR1 = USART_CTLR1_TE | USART_CTLR1_RE;
+    USART1->CTLR1 |= USART_CTLR1_UE;
 }
 
 // TX レジスタが空いていて READY=High なら 1 byte 送り出す
 static int uart_try_send(uint8_t byte) {
     if (!host_ready()) return 0;
-    if (!(USART2->STATR & USART_STATR_TXE)) return 0;
-    USART2->DATAR = byte;
+    if (!(USART1->STATR & USART_STATR_TXE)) return 0;
+    USART1->DATAR = byte;
     return 1;
 }
 
 // 受信データがあれば返す。なければ -1
 static int uart_receive(void) {
-    if (USART2->STATR & USART_STATR_RXNE) {
-        return (uint8_t)USART2->DATAR;
+    if (USART1->STATR & USART_STATR_RXNE) {
+        return (uint8_t)USART1->DATAR;
     }
     return -1;
 }
