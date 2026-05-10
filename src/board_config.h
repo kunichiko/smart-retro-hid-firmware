@@ -49,8 +49,27 @@
     #define BOARD_USB_SERIAL   u"mimicx-x68k-001"
     #define BOARD_FUNCTIONS    { &x68k_keyboard_function, &x68k_mouse_function }
 
+// ---------------------------------------------------------------------------
+// BOARD_COMBINED: ジョイスティック + X68000 キーボード/マウス 同時搭載
+// ---------------------------------------------------------------------------
+// CH32X035G8U6 (QFN28) 1 個で全機能を載せる "全部入り" バリアント。
+// GPIO / ペリフェラルは衝突しない:
+//   joystick      : PA0 (TH = TIM2_CH1), PA2-PA7 (D0-D5)、TIM2 + TIM3 + DMA1_Ch5/Ch7
+//   x68k_keyboard : PB10/PB11 (USART1 APB2)、PB12 (READY 入力)
+//   x68k_mouse    : PB9 (USART4_TX APB1, REMAP=011)
+// MIDI チャンネルは joystick=0 / x68k_keyboard=1 / x68k_mouse=2 で衝突しない。
+// ---------------------------------------------------------------------------
+#elif defined(BOARD_COMBINED)
+    extern const hid_function_t joystick_function;
+    extern const hid_function_t x68k_keyboard_function;
+    extern const hid_function_t x68k_mouse_function;
+    #define BOARD_NAME         "mimic-x-combo"
+    #define BOARD_USB_PRODUCT  u"Mimic X (Combined)"
+    #define BOARD_USB_SERIAL   u"mimicx-combo-001"
+    #define BOARD_FUNCTIONS    { &joystick_function, &x68k_keyboard_function, &x68k_mouse_function }
+
 #else
-    #error "No BOARD_* macro defined. Set one of BOARD_JOYSTICK, BOARD_X68K_KEYBOARD via build_flags."
+    #error "No BOARD_* macro defined. Set one of BOARD_JOYSTICK, BOARD_X68K_KEYBOARD, BOARD_COMBINED via build_flags."
 #endif
 
 #endif

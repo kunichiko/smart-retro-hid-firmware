@@ -9,7 +9,7 @@ CH32X035 のファームウェアを Web ブラウザから書き込むための
 1. CH32X035 の BOOT ボタンを押しながら USB ケーブルを接続する（または BOOT を押しながら RESET を押して離す）
 2. Chromium 系ブラウザ（Chrome, Edge）で [ファームウェア更新ページ](https://kunichiko.github.io/MimicX-firmware/firmware/) を開く
 3. 「デバイスに接続」を押し、「QinHeng Electronics 製のデバイス」を選択する
-4. 基板に合うバリアント（joystick / x68k_keyboard）とファームウェアバージョンを選択して「書き込み」を押す
+4. 基板に合うバリアント（joystick / x68k_keyboard / combined）とファームウェアバージョンを選択して「書き込み」を押す
 5. 書き込み完了後、USB ケーブルを抜き差しして通常モードで起動する
 
 ## バリアント
@@ -18,6 +18,7 @@ CH32X035 のファームウェアを Web ブラウザから書き込むための
 |-----------|------|-----------|
 | `joystick` | ATARI / メガドライブ 6 ボタン | `pio run -e joystick` |
 | `x68k_keyboard` | X68000 キーボード (キーボード + マウス) | `pio run -e x68k_keyboard` |
+| `combined` | 全機能 (joystick + x68k_keyboard + x68k_mouse) を 1 MCU に同居 | `pio run -e combined` |
 
 ## 動作環境
 

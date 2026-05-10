@@ -183,6 +183,7 @@
             <option value="" disabled selected>-- バリアントを選択 --</option>
             <option value="joystick">ジョイスティック (ATARI / メガドライブ 6 ボタン)</option>
             <option value="x68k_keyboard">X68000 キーボード (キーボード + マウス)</option>
+            <option value="combined">Combined (全機能: ジョイスティック + X68000 キーボード/マウス)</option>
         </select>
         <div class="variant-desc" id="variant-desc">
             ご使用の Mimic X 基板に合わせて選択してください。
@@ -229,6 +230,12 @@
                 releases: [
                     { version: 'v0.5.2', date: '2026-05-09', file: 'firmwares/mimicx_x68k_keyboard_v0.5.2.bin', note: 'CH32X035G8U6 対応 (USART1=PB10/PB11, READY=PB12, USART4_TX=PB9)' },
                     { version: 'v0.4.0', date: '2026-05-05', file: 'firmwares/mimicx_x68k_keyboard_v0.4.0.bin', note: '旧 C8T6 試作配線専用 (USART2=PA15/PA16, READY=PA17, USART3 PA18) — 新基板では選択しないこと' },
+                ],
+            },
+            combined: {
+                desc: '全機能 (ジョイスティック + X68000 キーボード + マウス) を 1 個の CH32X035G8U6 に同居させたバリアント。joystick / x68k_keyboard 各基板の GPIO がそのまま使える配線で 1 個の MCU を共有する開発・実験向け。MIDI ch は joystick=0 / keyboard=1 / mouse=2。',
+                releases: [
+                    { version: 'v0.5.2', date: '2026-05-10', file: 'firmwares/mimicx_combined_v0.5.2.bin', note: '初回リリース (joystick + x68k_keyboard + x68k_mouse 全部入り)' },
                 ],
             },
         };
