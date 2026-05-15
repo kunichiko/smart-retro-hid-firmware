@@ -159,14 +159,17 @@
     <div class="section">
         <h3>準備</h3>
         <div class="steps">
-            <div class="step">CH32X035 の BOOT ボタンを押しながら USB ケーブルを接続する（または BOOT を押しながら RESET を押して離す）</div>
-            <div class="step">このページで「デバイスに接続」ボタンを押す</div>
+            <div class="step">このページを開いた状態で、CH32X035 の BOOT ボタンを押しながら USB ケーブルを接続する</div>
+            <div class="step">すぐにこのページの「デバイスに接続」ボタンを押す（BOOT モードは無通信のまま約 5 秒経過すると通常起動に抜けてしまうため、ページを開いてから USB を挿してください）</div>
             <div class="step">「QinHeng Electronics 製のデバイス」(または「WinChipHead 製の不明なデバイス」) を選択する</div>
             <div class="step">基板に合うバリアントとバージョンを選択して「書き込み」を押す</div>
             <div class="step">書き込み完了後、USB ケーブルを抜き差しして通常モードで起動する</div>
         </div>
         <div class="warning">
             Chromium 系ブラウザ（Chrome, Edge）が必要です。Safari / Firefox は WebUSB に対応していません。
+        </div>
+        <div class="warning">
+            BOOT モード (内蔵 USB DFU ブートローダー) は、ホストから ISP コマンドを受信しないまま約 5 秒経過すると自動的に通常起動へ抜けます。先にこのページを開いてから USB を接続し、すぐに「デバイスに接続」を押してください。間に合わなかった場合は、USB を一度抜いて BOOT ボタンを押しながら挿し直してやり直してください。
         </div>
     </div>
 
